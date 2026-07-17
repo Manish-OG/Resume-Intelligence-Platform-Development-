@@ -1,541 +1,137 @@
-# PROJECT BIBLE
-# A Production-Grade AI Resume Intelligence Platform
+# PROJECT_BIBLE.md
 
-> **Purpose:** This document is the single source of truth for the project. Any AI assistant (ChatGPT, Claude, Gemini, etc.) should read this file before giving advice or generating code.
+> **Resume Intelligence Platform --- Single Source of Truth**
 
----
+------------------------------------------------------------------------
 
-# 1. AI CONTEXT
+# 1. Project Metadata
 
-If you're an AI assistant:
+**Project Name:** Resume Intelligence Platform
 
-- Read this file completely before suggesting anything.
-- This is a long-term AI Engineering portfolio project.
-- The goal is learning, not just finishing.
-- Explain **WHY** before **HOW**.
-- Do not rewrite working modules unless requested.
-- Never change architecture without discussion.
-- Prioritize modular, scalable, interview-quality implementations.
-- If uncertain, explicitly mention assumptions.
-- Keep code production-oriented rather than tutorial-oriented.
-- At the end of every session, help update this file.
+**Owner:** Manish Kumar Gupta
 
----
+**Repository:** Resume-Intelligence-Platform-Development-
 
-# 2. PROJECT METADATA
+**Project Type:** AI Engineering Portfolio Project
 
-Project Name:
-Resume Intelligence Platform
+**Target Roles** - AI Engineer - ML Engineer - GenAI Engineer
 
-Owner:
-Manish Kumar Gupta
+**Current Version:** v0.1.3
 
-Repository:
+**Current Status:** Active Development
 
-Version:
-v0.1.0
+**Current Milestone:** Parser Contract Finalization
 
-Project Type:
-AI Engineering Portfolio Project
+**Overall Progress:** ~20%
 
-Target Roles:
-- AI Engineer
-- ML Engineer
-- GenAI Engineer
+------------------------------------------------------------------------
 
-Status:
-Planning
+# 2. Vision
 
-Project Start:
+Build a production-grade AI application that accepts a Job Description
+and multiple Resume PDFs, ranks candidates semantically, explains the
+ranking, and exports recruiter-friendly results.
 
-Target Completion:
+The project prioritizes **engineering quality over feature count**.
 
-Current Phase:
+------------------------------------------------------------------------
 
-Current Milestone:
+# 3. Completed Work
 
-Current Session:
+## Foundation (Claude)
 
-Current Branch:
+-   Repository initialized
+-   Production folder structure created
+-   FastAPI backend scaffold
+-   Streamlit frontend scaffold
+-   SQLAlchemy database layer
+-   Dockerfile.backend
+-   Dockerfile.frontend
+-   docker-compose.yml
+-   README
+-   LICENSE
+-   requirements.txt
+-   .gitignore
+-   Parser scaffold
+-   Embedding scaffold
+-   Similarity scaffold
+-   Scorer scaffold
+-   Feedback scaffold
+-   Utilities scaffold
+-   Unit test scaffold
+-   SQLite initialization
+-   FastAPI Health endpoint
+-   Swagger/OpenAPI
+-   Local verification completed
 
-Current Commit:
+### Local Verification
 
-Overall Progress:
+-   Dependencies installed successfully
+-   pytest passing
+-   FastAPI booted successfully
+-   Health endpoint verified
+-   Swagger verified
+-   SQLite initialization verified
+-   Imports verified
 
-Last Updated:
+### Git Note
 
----
+Initial scaffold committed locally.
 
-# 3. PROJECT OVERVIEW
+Push blocked because cached Git credentials belonged to company account
+(`Manish-iovalence`) while repository belongs to personal account
+(`Manish-OG`). Resolved by generating a Personal Access Token for the
+`Manish-OG` account and reauthenticating.
 
-## Goal
+------------------------------------------------------------------------
 
-Build a production-style AI web application that accepts one Job Description and multiple Resume PDFs, semantically ranks candidates, identifies missing skills, generates explainable feedback, and exports results.
-
----
-
-## Objectives
-
-- Demonstrate AI Engineering skills
-- Learn production-level project architecture
-- Learn FastAPI
-- Learn Docker
-- Learn NLP with PyTorch
-- Build an interview-worthy GitHub project
-
----
-
-## Target Users
-
-- Recruiters
-- HR Teams
-- Hiring Managers
-
----
-
-# 4. PROJECT SCOPE
-
-## MVP Features
-
-- Upload Job Description
-- Upload Multiple Resume PDFs
-- PDF Parsing
-- Text Preprocessing
-- Resume Embeddings
-- Semantic Matching
-- Skill Extraction
-- Candidate Ranking
-- Explainable Feedback
-- SQLite Database
-- FastAPI Backend
-- Streamlit Frontend
-- CSV Export
-- Docker Support
-
----
-
-## Out of Scope (MVP)
-
-- Authentication
-- PostgreSQL
-- OCR
-- LLM Feedback
-- Fine-tuned Transformer
-- Cloud Deployment
-- Recruiter Dashboard
-
----
-
-# 5. PROJECT ARCHITECTURE
+# 4. Architecture
 
 User
 
 ↓
 
-Streamlit Frontend
+Streamlit
 
 ↓
-
-FastAPI Backend
-
-↓
-
-Resume Parser
-
-↓
-
-Text Preprocessing
-
-↓
-
-Embedding Engine
-
-↓
-
-Similarity Engine
-
-↓
-
-Scoring Engine
-
-↓
-
-Feedback Generator
-
-↓
-
-SQLite Database
-
-↓
-
-Export Results
-
----
-
-# 6. TECHNOLOGY STACK
-
-Language
-
-- Python
-
-AI
-
-- PyTorch
-- Hugging Face
-- Sentence Transformers
-
-Backend
-
-- FastAPI
-
-Frontend
-
-- Streamlit
-
-Database
-
-- SQLite
-
-PDF Parsing
-
-- PyMuPDF
-
-Data Processing
-
-- Pandas
-
-Deployment
-
-- Docker
-
-Testing
-
-- pytest
-
-Version Control
-
-- Git
-- GitHub
-
-Future
-
-- PostgreSQL
-- FAISS
-- MLflow
-
----
-
-# 7. PROJECT STRUCTURE
-
-```
-resume-intelligence-platform/
-
-app/
-    backend/
-    frontend/
-
-src/
-    parser/
-    preprocess/
-    embeddings/
-    similarity/
-    scorer/
-    feedback/
-    database/
-    utils/
-
-tests/
-
-models/
-
-data/
-
-notebooks/
-
-Dockerfile
-docker-compose.yml
-requirements.txt
-README.md
-PROJECT_BIBLE.md
-```
-
----
-
-# 8. MODULE RESPONSIBILITIES
-
-Parser
-- Extract text from PDFs
-- No preprocessing
-- No scoring
-
-Preprocess
-- Clean text
-- Normalize
-- Section extraction
-
-Embeddings
-- Generate embeddings only
-
-Similarity
-- Compute similarity only
-
-Scorer
-- Generate weighted score
-
-Feedback
-- Generate explanations
-
-Database
-- Store all persistent data
-
-Frontend
-- User interaction only
-
-Backend
-- API endpoints only
-
----
-
-# 9. DATA FLOW
-
-Resume PDF
-
-↓
-
-Parser
-
-↓
-
-Clean Text
-
-↓
-
-Section Extraction
-
-↓
-
-Embedding Generation
-
-↓
-
-Similarity
-
-↓
-
-Weighted Score
-
-↓
-
-Feedback
-
-↓
-
-Database
-
-↓
-
-Frontend
-
----
-
-# 10. DATA CONTRACTS
-
-Parser
-
-Input
-
-Resume.pdf
-
-Output
-
-- Raw Text
-- Metadata
-
----
-
-Embedding
-
-Input
-
-String
-
-Output
-
-Embedding Vector
-
----
-
-Similarity
-
-Input
-
-Resume Embedding
-
-JD Embedding
-
-Output
-
-Similarity Score
-
----
-
-Scorer
-
-Output
-
-Semantic Score
-
-Skill Score
-
-Experience Score
-
-Education Score
-
-Final Score
-
-Recommendation
-
----
-
-# 11. DEVELOPMENT ROADMAP
-
-Day 1
-
-Environment
-Repository
-Project Structure
-
-Day 2
-
-PDF Parsing
-
-Day 3
-
-Preprocessing
-
-Day 4
-
-Embeddings
-
-Day 5
-
-Skill Extraction
-
-Day 6
-
-Scoring
-
-Day 7
 
 FastAPI
 
-Day 8
+↓
 
-Streamlit
+Parser
 
-Day 9
+↓
 
-SQLite
+Preprocessing
 
-Day 10
+↓
+
+Embeddings
+
+↓
+
+Similarity
+
+↓
+
+Scorer
+
+↓
 
 Feedback
 
-Day 11
+↓
 
-Batch Processing
+Database
 
-Day 12
+↓
 
-Docker
+Export
 
-Day 13
+------------------------------------------------------------------------
 
-Testing
-
-Day 14
-
-Documentation
-Deployment
-Demo
-
----
-
-# 12. CURRENT STATUS
-
-Completed
-
--
-
--
-
--
-
-In Progress
-
--
-
-Next
-
--
-
----
-
-# 13. CURRENT TODO
-
-High Priority
-
--
-
-Medium Priority
-
--
-
-Low Priority
-
--
-
----
-
-# 14. DESIGN DECISIONS
-
-Decision
-
-Reason
-
-Alternatives
-
-Trade-offs
-
-Status
-
-Example
-
-Decision
-
-SQLite
-
-Reason
-
-Simple MVP
-
-Alternative
-
-PostgreSQL
-
-Trade-off
-
-Less scalable
-
-Status
-
-Accepted
-
-(Add future decisions below this.)
-
----
-
-# 15. DEPENDENCIES
+# 5. Technology Stack
 
 Python
 
@@ -543,305 +139,411 @@ FastAPI
 
 Streamlit
 
-PyTorch
+PyMuPDF
 
 Sentence Transformers
 
-Transformers
+PyTorch
 
-PyMuPDF
+Transformers
 
 SQLAlchemy
 
-Pandas
+SQLite
 
-pytest
+Pandas
 
 Docker
 
----
+pytest
 
-# 16. CODING STANDARDS
+------------------------------------------------------------------------
 
-Style
+# 6. Folder Structure
 
-PEP8
+    app/
+    backend/
+    frontend/
 
-Naming
+    src/
+    parser/
+    preprocess/
+    embeddings/
+    similarity/
+    scorer/
+    feedback/
+    database/
+    models/
+    utils/
 
-snake_case
+    tests/
+    data/
+    models/
+    notebooks/
 
-Classes
+------------------------------------------------------------------------
 
-PascalCase
+# 7. Module Responsibilities
 
-Constants
+Parser - Extract raw PDF text - Return ParsedResume - No cleaning
 
-UPPER_CASE
+Preprocess - Cleaning - Normalization - Section extraction
 
-Function Rules
+Embeddings - Generate vectors only
 
-- Single responsibility
-- Small functions
-- Type hints
-- Docstrings
+Similarity - Compute similarity
 
-Maximum Function Size
+Scorer - Weighted scoring
 
-~50 lines
+Feedback - Human-readable explanations
 
-Maximum File Size
+Database - Persistence
 
-~300 lines
+Backend - APIs only
 
----
+Frontend - UI only
 
-# 17. GIT WORKFLOW
+------------------------------------------------------------------------
 
-Branch Strategy
+# 8. Architecture Principles
 
-main
+-   Single Responsibility Principle
+-   Modules communicate through domain models.
+-   Business logic never depends on Streamlit.
+-   Business logic never depends on FastAPI.
+-   Database models are not business models.
+-   Prefer composition over inheritance.
+-   Small testable functions.
+-   Production-oriented code over tutorial code.
 
-↓
+------------------------------------------------------------------------
 
-feature/parser
+# 9. Domain Models
 
-↓
+Introduced in Session 2. Finalized in Session 3.
 
-feature/preprocess
+Current model:
 
-↓
+ParsedResume
 
-feature/embeddings
+Purpose:
 
-↓
+Represents parser output flowing through the AI pipeline.
 
-feature/scorer
+Fields:
 
-↓
+-   filename
+-   raw_text
+-   page_count
+-   parsed_at
 
-feature/frontend
+Reason:
 
-↓
+Avoid passing raw strings through the pipeline.
 
-merge
+Immutability:
 
-Commit Convention
+`ParsedResume` is a frozen dataclass. A parse either succeeds and
+produces a complete, immutable `ParsedResume`, or it fails and raises
+`PDFParseError`. There is no partially-valid or mutable intermediate
+state.
 
-feat:
+------------------------------------------------------------------------
 
-fix:
+# 10. Database Models
 
-docs:
+Current SQLAlchemy tables
 
-refactor:
+-   Job
+-   Resume
+-   Candidate
+-   Score
+-   Feedback
+-   Upload
 
-test:
+Purpose:
 
-style:
+Persistence only.
 
-perf:
+Not used as business/domain objects.
 
-chore:
+------------------------------------------------------------------------
 
----
+# 11. Major Design Decisions
 
-# 18. SESSION LOG
+### Separate App and AI Engine
 
-## Session Template
+Reason: Frontend/backend can evolve independently.
 
-Date:
+Status: Accepted
+
+------------------------------------------------------------------------
+
+### Domain Models separate from Database Models
+
+Reason: Business objects and persistence have different
+responsibilities.
+
+Status: Accepted
+
+------------------------------------------------------------------------
+
+### dataclass for Internal Domain Models
+
+Reason: Simple, lightweight, Python standard library.
+
+Alternative: Pydantic
+
+Trade-off: Less validation but lower overhead.
+
+Status: Accepted
+
+------------------------------------------------------------------------
+
+### SQLAlchemy only for persistence
+
+Reason: Avoid mixing ORM with business logic.
+
+Status: Accepted
+
+------------------------------------------------------------------------
+
+### Parser Contract: Exceptions, not a result type
+
+Reason: For the current single-PDF-at-a-time milestone, raising
+`PDFParseError` on failure is idiomatic Python and keeps the success
+path (`ParsedResume`) simple and fully valid by construction. A
+richer result type (e.g. carrying `status`/`errors` for partial
+failure) was considered and rejected for now because nothing in the
+codebase yet needs graceful per-file failure handling.
+
+Revisit trigger: when batch processing is introduced and a single bad
+PDF should not abort the whole batch.
+
+Status: Accepted for current milestone; open for revision at the
+batch-processing milestone.
+
+------------------------------------------------------------------------
+
+### ParsedResume is a frozen dataclass
+
+Reason: It represents a completed, successful parse result. Nothing
+in the codebase mutates it after construction, so making it immutable
+prevents accidental mutation and reinforces that it is a value object,
+not mutable state.
+
+Status: Accepted
+
+------------------------------------------------------------------------
+
+# 12. Module Status
+
+  Module          Status
+  --------------- --------------------
+  Parser          Contract Finalized
+  Domain Models   Finalized (ParsedResume)
+  Preprocess      Scaffold
+  Embeddings      Scaffold
+  Similarity      Scaffold
+  Scorer          Initial
+  Feedback        Scaffold
+  Database        Initial
+  Backend         Working
+  Frontend        Scaffold
+
+------------------------------------------------------------------------
+
+# 13. Testing Status
+
+Current
+
+✅ Parser tests passing (missing file, empty/no-text PDF, successful
+parse type/filename/page_count/raw_text, immutability)
+
+✅ Scorer tests passing
+
+Current Result
+
+9 / 9 tests passing
+
+------------------------------------------------------------------------
+
+# 14. Verification Checklist
+
+Completed
+
+-   pytest
+-   compileall
+-   FastAPI
+-   Swagger
+-   Health endpoint
+-   SQLite initialization
+-   Parser success-path contract verified by tests
+
+------------------------------------------------------------------------
+
+# 15. Session Log
+
+## Session 1 (Scaffold)
+
+Completed by Claude.
+
+Created production scaffold, Docker, database, API, tests and
+documentation.
+
+------------------------------------------------------------------------
+
+## Session 2 (ChatGPT)
+
+Achievements
+
+-   Reviewed architecture
+-   Introduced domain-model architecture
+-   Created src/models
+-   Added ParsedResume dataclass
+-   Refactored parser to return ParsedResume
+-   Preserved backward compatibility
+-   Verified project after refactor
+-   All tests passing
+-   FastAPI healthy
+-   Swagger working
+
+Lessons
+
+-   Difference between Domain Models and Database Models
+-   Why data contracts matter
+-   Why dataclasses were chosen
+-   Importance of architectural boundaries
+
+------------------------------------------------------------------------
+
+## Session 3 (Claude, feature/parser-contract-milestone)
+
+Achievements
+
+-   Reviewed Session 2's refactor: ran the diff, executed the parser
+    against a generated PDF, and found that `status`/`errors` on
+    `ParsedResume` were unreachable because `extract_text()` always
+    raises on failure
+-   Removed unused `status` and `errors` fields from `ParsedResume`
+-   Made `ParsedResume` a frozen dataclass
+-   Fixed missing trailing newline in `pdf_parser.py`
+-   Added success-path tests generating a temporary PDF at test time
+    (via PyMuPDF, no binary fixtures committed): return type, filename,
+    page_count, raw_text content, and immutability
+-   Synced this document with the repository (previous committed copy
+    had drifted from the actual project state)
+
+Lessons
+
+-   A domain model's fields should match what the code actually
+    produces; unused fields that imply an unsupported behavior are a
+    real defect, not just a style nit
+-   Passing tests only certify what they actually assert; a test suite
+    can be green while covering none of a refactor's new behavior
+-   Documentation drift is easiest to catch by diffing what's
+    committed against what's claimed as current
+
+------------------------------------------------------------------------
+
+# 16. Current TODO
+
+High Priority
+
+-   Add parser logging
+-   Add parser performance metrics
+-   Handle malformed/scanned PDFs better
+
+Medium
+
+-   Preprocessing module
+-   Section extraction
+-   Email/phone extraction
+
+Low
+
+-   FAISS
+-   PostgreSQL
+-   MLflow
+
+------------------------------------------------------------------------
+
+# 17. Next Session
+
+Goal
+
+Add structured logging and benchmarking to the parser, per the
+reordered roadmap agreed after Session 3's review.
+
+Tasks
+
+-   Structured logging around parse attempts (success/failure, timing)
+-   Parser benchmarking (target: PDF parsing < 2 sec, see Section 19)
+-   Only after logging/benchmarking: proceed to preprocessing
+
+------------------------------------------------------------------------
+
+# 18. Known Technical Debt
+
+-   Parser catches generic Exception
+-   No structured logging
+-   No parser metrics
+-   No API schemas yet
+-   No relationships in SQLAlchemy models
+
+------------------------------------------------------------------------
+
+# 19. Performance Goals
+
+PDF Parsing \<2 sec
+
+Embedding \<1 sec
+
+Similarity \<200 ms
+
+API \<1 sec
+
+------------------------------------------------------------------------
+
+# 20. Interview Talking Points
+
+You should be able to explain:
+
+-   Why domain models exist
+-   Difference between ORM models and business models
+-   Why parser returns ParsedResume instead of string
+-   Why modules have single responsibilities
+-   Why architecture matters before adding ML
+-   Why ParsedResume is frozen and carries no status/errors fields
+-   Why the parser raises exceptions instead of returning a result
+    type, and what would change that decision
+
+------------------------------------------------------------------------
+
+# 21. Philosophy
+
+This project is **not** a tutorial clone.
 
 Goals:
 
-Completed:
-
-Problems:
-
-Solutions:
-
-Lessons Learned:
-
-Files Modified:
-
-Commit:
-
-Next Session Goal:
-
-(Add every session below.)
-
----
-
-# 19. CHANGELOG
-
-v0.1.0
-
-Project Initialized
-
-v0.2.0
-
-Parser
-
-v0.3.0
-
-Preprocessing
-
-(Update continuously.)
-
----
-
-# 20. ERROR LOG
-
-Date
-
-Problem
-
-Root Cause
-
-Solution
-
-Status
-
-(Add future issues.)
-
----
-
-# 21. KNOWN LIMITATIONS
-
-- Dictionary-based skill extraction
-- SQLite only
-- No OCR
-- No Authentication
-- No multilingual support
-- No fine-tuned model
-
----
-
-# 22. FUTURE ROADMAP
-
-Version 2
-
-- PostgreSQL
-- FAISS
-- Fine-tuning
-
-Version 3
-
-- LLM Feedback
-- Recruiter Dashboard
-
-Version 4
-
-- Authentication
-- OCR
-- Analytics Dashboard
-
----
-
-# 23. PERFORMANCE GOALS
-
-PDF Parse
-
-<2 sec
-
-Embedding
-
-<1 sec
-
-Similarity
-
-<200 ms
-
-API Response
-
-<1 sec
-
----
-
-# 24. LEARNING NOTES
-
-(Add concepts learned.)
-
-Example
-
-Today I learned
-
-- Sentence Transformers
-- Cosine Similarity
-- FastAPI Dependency Injection
-
----
-
-# 25. INTERVIEW STORIES
-
-Challenge
-
-Problem
-
-Solution
-
-Result
-
-Lesson
-
-(Add important experiences.)
-
----
-
-# 26. REFERENCES
-
-Datasets
-
-Documentation
-
-Research Papers
-
-Articles
-
-Useful GitHub Repositories
-
----
-
-# 27. PROJECT PHILOSOPHY
-
-This is NOT a tutorial project.
-
-This is NOT a cloned GitHub repository.
-
-This project should demonstrate:
-
-- AI Engineering
-- Software Engineering
-- Clean Architecture
-- Testing
-- Deployment
-- Documentation
-- Interview Readiness
-
-Quality is preferred over quantity.
+-   Learn AI Engineering
+-   Learn Software Engineering
+-   Learn production architecture
+-   Build something interview-worthy
 
 Understanding is preferred over speed.
 
-Every implementation should be explainable.
+Quality is preferred over quantity.
 
----
+------------------------------------------------------------------------
 
-# 28. END OF SESSION CHECKLIST
+# 22. End-of-Session Checklist
 
-Before ending a session:
+Completed
 
-- Update Current Status
-- Update TODO
-- Update Session Log
-- Update Changelog
-- Record Design Decisions (if any)
-- Record Errors (if any)
-- Commit changes
-- Push to GitHub
-- Decide next session's goal
-
----
-
-# 29. NOTES
-
-(Free space for ideas, reminders, feature requests, random thoughts, or future improvements.)
+-   Parser contract finalized (exceptions on failure, frozen
+    ParsedResume on success)
+-   Dead status/errors fields removed
+-   Success-path tests added and passing
+-   EOF newline fixed
+-   PROJECT_BIBLE synced with repository
