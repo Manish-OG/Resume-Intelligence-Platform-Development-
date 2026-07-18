@@ -223,6 +223,7 @@ data/*
 models/*
 !models/.gitkeep
 *.db
+samples/
 
 # Claude Code session files
 .claude/

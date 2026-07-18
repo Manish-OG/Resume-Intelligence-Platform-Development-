@@ -16,13 +16,13 @@
 
 **Target Roles** - AI Engineer - ML Engineer - GenAI Engineer
 
-**Current Version:** v0.1.3
+**Current Version:** v0.1.4
 
 **Current Status:** Active Development
 
-**Current Milestone:** Parser Contract Finalization
+**Current Milestone:** Production Parser (Completed)
 
-**Overall Progress:** ~20%
+**Overall Progress:** ~25%
 
 ------------------------------------------------------------------------
 
@@ -73,6 +73,25 @@ The project prioritizes **engineering quality over feature count**.
 -   Swagger verified
 -   SQLite initialization verified
 -   Imports verified
+
+## Production Parser (ChatGPT, reviewed and polished by Claude)
+
+-   `src/utils/logging_config.py`: centralized logging config (INFO
+    level, timestamped, consistent format) for application-level
+    loggers. Applied once at FastAPI startup.
+-   Parser logs parse start, PDF open, page count, success, empty/
+    scanned warnings, elapsed time, and exceptions. Resume content is
+    never logged (verified: no log call references `raw_text`/`text`).
+-   `src/parser/parser_benchmark.py`: CLI benchmark tool
+    (`python -m src.parser.parser_benchmark <pdf> [--runs N]`),
+    reporting average/min/max/std-dev via the standard library only.
+    Includes a discarded warm-up run so cold-start cost (measured at
+    ~2x a steady-state parse) doesn't skew Max/Std Dev.
+-   Parser robustness: explicit checks for missing file, non-file
+    path, and password-protected PDF, each raising `PDFParseError`
+    with a clear message. OCR intentionally not implemented.
+-   Parser contract unchanged: `extract_text(pdf_path) -> ParsedResume`,
+    failures still raise `PDFParseError`.
 
 ### Git Note
 
@@ -336,11 +355,48 @@ Status: Accepted
 
 ------------------------------------------------------------------------
 
+### Benchmark excludes a warm-up run from reported stats
+
+Reason: measured directly — the first `extract_text()` call in a run
+is consistently ~2x slower than steady state (cold import/cache
+effects). Without discarding it, Max and Std Dev mostly reflect a
+one-time cost rather than real parser variance.
+
+Status: Accepted
+
+------------------------------------------------------------------------
+
+### Logging is centralized for app-level loggers only
+
+Reason: `configure_logging()` reconfigures the root logger, so any
+logger obtained via `logging.getLogger(__name__)` (e.g. the parser's)
+picks up the consistent format. It does **not** cover uvicorn's own
+`uvicorn`/`uvicorn.error`/`uvicorn.access` loggers, which are
+configured separately with `propagate=False` and keep their own
+default format when the app is run via `uvicorn app.backend.main:app`.
+Verified by booting the app both ways.
+
+Status: Accepted as a known scope boundary, not a defect.
+
+------------------------------------------------------------------------
+
+### OCR, auto-decryption, MIME validation, multiple exception classes: rejected
+
+Reason: none are needed yet. Scanned/image-only PDFs and
+password-protected PDFs both raise `PDFParseError` with a clear
+message today, which is enough until a real requirement forces
+OCR or auto-decryption. A single `PDFParseError` class is sufficient
+while there is exactly one caller.
+
+Status: Accepted; revisit only if a concrete milestone needs it.
+
+------------------------------------------------------------------------
+
 # 12. Module Status
 
   Module          Status
   --------------- --------------------
-  Parser          Contract Finalized
+  Parser          Production (logging, benchmarking, robustness)
   Domain Models   Finalized (ParsedResume)
   Preprocess      Scaffold
   Embeddings      Scaffold
@@ -357,14 +413,15 @@ Status: Accepted
 
 Current
 
-✅ Parser tests passing (missing file, empty/no-text PDF, successful
-parse type/filename/page_count/raw_text, immutability)
+✅ Parser tests passing (missing file, directory input, empty/no-text
+PDF, password-protected PDF, successful parse type/filename/
+page_count/raw_text, immutability)
 
 ✅ Scorer tests passing
 
 Current Result
 
-9 / 9 tests passing
+11 / 11 tests passing
 
 ------------------------------------------------------------------------
 
@@ -379,6 +436,11 @@ Completed
 -   Health endpoint
 -   SQLite initialization
 -   Parser success-path contract verified by tests
+-   Benchmark CLI run and validated (correct invocation, warm-up
+    excluded, ~7.9ms avg / ~0.7ms std-dev on a sample resume)
+-   Logging verified in two modes: direct import (custom format
+    applies) and live `uvicorn` run (app-level logs formatted;
+    uvicorn's own server logs are not, by design)
 
 ------------------------------------------------------------------------
 
@@ -446,13 +508,46 @@ Lessons
 
 ------------------------------------------------------------------------
 
+## Session 4 (ChatGPT: production parser; Claude: review + polish)
+
+Achievements
+
+-   ChatGPT added structured logging, the benchmark CLI, and
+    robustness checks (missing file, non-file path, password-protected
+    PDF), expanding the test suite to 11/11 passing
+-   Claude reviewed by running the actual code rather than trusting
+    the write-up, and found: an untracked personal resume PDF in
+    `samples/` with no `.gitignore` entry (fixed), a documented
+    benchmark command that fails as written (missing required `pdf`
+    arg, plus a `uv run` prefix the project doesn't actually use),
+    unwarmed benchmark stats skewed ~10x by cold-start cost (fixed
+    with a discarded warm-up run), and a "centralized logging" claim
+    that doesn't extend to uvicorn's own server logs (documented as a
+    scope boundary, not fixed in code)
+-   ChatGPT and Claude agreed on which findings to act on before
+    syncing this document
+
+Lessons
+
+-   A milestone write-up's claims are only as good as running the
+    actual commands it describes
+-   A tool being installed on a machine (`uv`) doesn't mean a project
+    uses it — check for the project's actual manifest/lockfiles
+-   Untracked sample/personal files need an explicit `.gitignore`
+    entry before they exist, not after
+
+------------------------------------------------------------------------
+
 # 16. Current TODO
 
 High Priority
 
--   Add parser logging
--   Add parser performance metrics
--   Handle malformed/scanned PDFs better
+-   None open for the parser at this time. Scanned-PDF handling via
+    OCR was evaluated and deliberately rejected for this milestone
+    (see Section 11: "OCR, auto-decryption, MIME validation..." design
+    decision) — scanned PDFs still raise `PDFParseError` with a clear
+    message, which is considered sufficient until OCR is an actual
+    requirement.
 
 Medium
 
@@ -472,22 +567,23 @@ Low
 
 Goal
 
-Add structured logging and benchmarking to the parser, per the
-reordered roadmap agreed after Session 3's review.
+Begin the Resume Intelligence Engine milestone: resume preprocessing,
+text normalization, section detection, and a structured resume
+representation. Do not start embeddings, semantic search, RAG, or LLM
+feedback before this milestone is complete.
 
 Tasks
 
--   Structured logging around parse attempts (success/failure, timing)
--   Parser benchmarking (target: PDF parsing < 2 sec, see Section 19)
--   Only after logging/benchmarking: proceed to preprocessing
+-   Preprocessing module (cleaning, normalization)
+-   Section extraction (education, experience, skills, etc.)
+-   Structured resume representation (new domain model, separate from
+    `ParsedResume`)
 
 ------------------------------------------------------------------------
 
 # 18. Known Technical Debt
 
--   Parser catches generic Exception
--   No structured logging
--   No parser metrics
+-   Parser catches generic Exception for the fitz.open/get_text block
 -   No API schemas yet
 -   No relationships in SQLAlchemy models
 
@@ -495,7 +591,8 @@ Tasks
 
 # 19. Performance Goals
 
-PDF Parsing \<2 sec
+PDF Parsing \<2 sec (met: ~7.9ms avg on a sample resume, see
+benchmark in Section 3)
 
 Embedding \<1 sec
 
@@ -539,11 +636,25 @@ Quality is preferred over quantity.
 
 # 22. End-of-Session Checklist
 
-Completed
+Completed (Session 3)
 
 -   Parser contract finalized (exceptions on failure, frozen
     ParsedResume on success)
 -   Dead status/errors fields removed
 -   Success-path tests added and passing
 -   EOF newline fixed
+-   PROJECT_BIBLE synced with repository
+
+Completed (Session 4)
+
+-   Structured logging, benchmark CLI, and robustness checks added
+    (ChatGPT); reviewed by running the actual code (Claude)
+-   `samples/` added to `.gitignore` (untracked personal PDF was
+    previously unignored)
+-   Benchmark warm-up run added, excluded from reported stats
+-   Trailing whitespace fixed in pdf_parser.py
+-   Logging scope documented accurately (app-level, not uvicorn's own
+    server logs)
+-   Benchmark CLI documented as plain `python -m ...` (not `uv run` —
+    project has no `pyproject.toml`/`uv.lock`)
 -   PROJECT_BIBLE synced with repository
