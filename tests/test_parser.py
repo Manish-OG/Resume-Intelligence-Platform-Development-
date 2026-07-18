@@ -1,3 +1,4 @@
+from unittest.mock import MagicMock, patch
 import fitz
 import pytest
 
@@ -20,6 +21,10 @@ def sample_pdf(tmp_path):
 def test_extract_text_missing_file():
     with pytest.raises(PDFParseError):
         extract_text("does-not-exist.pdf")
+
+def test_extract_text_directory_raises(tmp_path):
+    with pytest.raises(PDFParseError):
+        extract_text(tmp_path)
 
 
 def test_extract_text_empty_pdf_raises(tmp_path):
@@ -58,3 +63,17 @@ def test_parsed_resume_is_immutable(sample_pdf):
     result = extract_text(sample_pdf)
     with pytest.raises(AttributeError):
         result.filename = "changed.pdf"
+
+def test_extract_text_password_protected_pdf():
+    mock_doc = MagicMock()
+    mock_doc.__enter__.return_value = mock_doc
+    mock_doc.__exit__.return_value = None
+    mock_doc.needs_pass = True
+
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("pathlib.Path.is_file", return_value=True),
+        patch("fitz.open", return_value=mock_doc),
+    ):
+        with pytest.raises(PDFParseError, match="password protected"):
+            extract_text("protected.pdf")
