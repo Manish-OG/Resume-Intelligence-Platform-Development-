@@ -4,7 +4,7 @@ import time
 
 import fitz  # PyMuPDF
 
-from src.models.resume_models import ParsedResume
+from src.models.parsed_resume import ParsedResume
 
 logger = logging.getLogger(__name__)
 
