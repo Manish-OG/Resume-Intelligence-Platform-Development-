@@ -2,7 +2,7 @@ from unittest.mock import MagicMock, patch
 import fitz
 import pytest
 
-from src.models.resume_models import ParsedResume
+from src.models.parsed_resume import ParsedResume
 from src.parser.pdf_parser import PDFParseError, extract_text
 
 

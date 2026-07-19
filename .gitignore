@@ -227,3 +227,4 @@ samples/
 
 # Claude Code session files
 .claude/
+SESSION_PROMPT.md
