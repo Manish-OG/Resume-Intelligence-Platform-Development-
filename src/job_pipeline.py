@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import numpy as np
+
+from src.embeddings.encoder import encode
 from src.parser.pdf_parser import extract_text
 from src.preprocess.preprocessor import clean_text
 
@@ -23,3 +26,19 @@ def parse_job_description(pdf_path: Path | str) -> str:
 
     parsed = extract_text(pdf_path)
     return clean_text(parsed.raw_text)
+
+
+def build_job_embedding(description: str) -> np.ndarray:
+    """
+    The single, shared path from a Job's description to its semantic
+    embedding.
+
+    Unlike the resume side (see src/pipeline.py's build_resume_embedding()),
+    no re-derivation is needed: Job.description is already the fully
+    cleaned text (parse_job_description() already ran clean_text() at
+    ingestion time), and no JD section structure exists to strip
+    (deliberate design — see PROJECT_BIBLE.md Section 11). Encode
+    directly.
+    """
+
+    return encode(description)
