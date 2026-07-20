@@ -44,14 +44,13 @@ feedback generation doesn't exist, and the actual frontend is still
 scaffold. See Section 12 (Module Status) and Section 18 (Known
 Technical Debt) for the honest breakdown.
 
-Git Note (updated Session 16, first written Session 8): all work
-through Session 14 (Embeddings module hardening) was committed and
-pushed — PR #4, `a54d584`. That is still the last commit on `main` —
-**both Session 15 (`POST /rank`) and Session 16 (skill matching) are
-uncommitted working-tree state as of this writing**, sitting together
-in one working tree (two milestones' worth of un-pushed work, not
-one). Verified directly via `git log`/`git status`, not assumed from
-a prior note. If a new session finds this note still true, confirm
+Git Note (updated Session 17, first written Session 8): all work
+through Session 16 (`POST /rank` + skill matching, bundled into one
+PR since both were uncommitted together) was committed and pushed —
+PR #5, merged to `main` as `dc02722`. That is the last commit on
+`main`, and it matches `origin/main`. Working tree is clean. Verified
+directly via `git log`/`git status`, not assumed from a prior note. If
+a new session finds uncommitted work in the working tree, confirm
 with the user whether to commit before doing further work — recurring
 every session because commits happen at the user's discretion, not
 automatically.
