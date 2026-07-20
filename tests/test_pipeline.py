@@ -1,9 +1,9 @@
 import fitz
 import pytest
 
-from src.models import SectionType
+from src.models import Section, SectionedResume, SectionType
 from src.parser.pdf_parser import PDFParseError
-from src.pipeline import PipelineResult, process_resume
+from src.pipeline import PipelineResult, prepare_resume_embedding_text, process_resume
 
 
 @pytest.fixture
@@ -88,3 +88,67 @@ def test_pipeline_result_is_immutable(sample_pdf):
 
     with pytest.raises(AttributeError):
         result.contact = None
+
+
+def _sectioned_resume(sections: list[Section]) -> SectionedResume:
+    from datetime import datetime
+
+    return SectionedResume(
+        filename="resume.pdf",
+        page_count=1,
+        processed_at=datetime.utcnow(),
+        sections=tuple(sections),
+    )
+
+
+def test_prepare_resume_embedding_text_excludes_header():
+    sections = _sectioned_resume(
+        [
+            Section(SectionType.HEADER, "", "Jane Doe\njane@example.com"),
+            Section(SectionType.EXPERIENCE, "Experience", "Backend Engineer at Acme"),
+        ]
+    )
+
+    text = prepare_resume_embedding_text(sections)
+
+    assert "jane@example.com" not in text
+    assert "Jane Doe" not in text
+    assert "Backend Engineer at Acme" in text
+
+
+def test_prepare_resume_embedding_text_joins_sections_in_order():
+    sections = _sectioned_resume(
+        [
+            Section(SectionType.HEADER, "", "Jane Doe"),
+            Section(SectionType.EXPERIENCE, "Experience", "Backend Engineer"),
+            Section(SectionType.EDUCATION, "Education", "BSc Computer Science"),
+        ]
+    )
+
+    text = prepare_resume_embedding_text(sections)
+
+    assert text.index("Backend Engineer") < text.index("BSc Computer Science")
+
+
+def test_prepare_resume_embedding_text_header_only_returns_empty_string():
+    sections = _sectioned_resume([Section(SectionType.HEADER, "", "Jane Doe")])
+
+    text = prepare_resume_embedding_text(sections)
+
+    assert text == ""
+
+
+def test_prepare_resume_embedding_text_no_sections_returns_empty_string():
+    text = prepare_resume_embedding_text(_sectioned_resume([]))
+
+    assert text == ""
+
+
+def test_prepare_resume_embedding_text_real_resume_end_to_end(sample_pdf):
+    result = process_resume(sample_pdf)
+
+    text = prepare_resume_embedding_text(result.sections)
+
+    assert "Jane Doe" not in text
+    assert "Backend Engineer at Acme" in text
+    assert "BSc Computer Science" in text
