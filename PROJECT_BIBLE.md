@@ -1841,7 +1841,6 @@ Lessons
 
 ## High Priority
 
-- Build real skill/experience/education scoring so `Scorer` can finally be wired — `/rank` is semantic-only today by deliberate, documented choice (Section 11), not because the other signals were forgotten
 - Score experience/education so `Scorer`/`Score` persistence can finally be wired — 2 of 4 signals now real (`semantic_score`, `skill_score`); this is what's left
 - Wire the remaining 2 stub routes (`/results`, `/download`) — `/results` needs `Score` persistence to exist first (still deferred, Section 11)
 - Extend `ALIASES` for further common headings not yet recognized (e.g. Certifications synonyms, Summary synonyms) — same mechanism just used for "Positions of Responsibility"
