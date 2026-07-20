@@ -4,13 +4,14 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.backend.api.schemas import UploadJobResponse, UploadResumeResponse
+from app.backend.api.schemas import RankResponse, UploadJobResponse, UploadResumeResponse
 from app.backend.config import UPLOAD_DIR
 from src.database.db import get_db
 from src.database.models import Candidate, Job, Resume, Upload
 from src.job_pipeline import parse_job_description
 from src.parser.pdf_parser import PDFParseError
 from src.pipeline import process_resume
+from src.ranking import rank_resumes_against_job
 
 router = APIRouter()
 
@@ -89,9 +90,21 @@ async def upload_resume(
     )
 
 
-@router.post("/rank")
-async def rank_candidates(job_id: int):
-    raise NotImplementedError
+@router.post("/rank", response_model=RankResponse)
+async def rank_candidates(job_id: int, db: Session = Depends(get_db)) -> RankResponse:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    pairs = (
+        db.query(Resume, Candidate)
+        .join(Candidate, Resume.candidate_id == Candidate.id)
+        .all()
+    )
+
+    ranked = rank_resumes_against_job(job, pairs)
+
+    return RankResponse(job_id=job.id, candidates=ranked)
 
 
 @router.get("/results")

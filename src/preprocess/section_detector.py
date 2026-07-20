@@ -53,6 +53,9 @@ ALIASES: dict[SectionType, set[str]] = {
         "activities",
         "leadership",
         "affiliations",
+        "positions of responsibility",
+        "extracurricular activities",
+        "extra-curricular activities",
     },
 }
 
