@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from src.models import CandidateName, ContactInfo, ResumeEntry, SectionedResume
+from src.ranking import RankedCandidate
 
 
 @dataclass(frozen=True)
@@ -42,3 +43,18 @@ class UploadJobResponse:
     job_id: int
     title: str
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class RankResponse:
+    """
+    Response body for POST /rank.
+
+    candidates is sorted descending by semantic_score and reuses
+    RankedCandidate (src/ranking.py) directly — already minimal
+    (resume_id/candidate_id/candidate_name/semantic_score), nothing to
+    exclude the way raw_text/description were for the upload routes.
+    """
+
+    job_id: int
+    candidates: list[RankedCandidate]

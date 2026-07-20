@@ -152,11 +152,33 @@ def test_known_secondary_heading_gets_own_other_section():
 
 
 def test_other_alias_types_all_recognized():
-    for heading in ("Publications", "Languages", "Volunteer Work"):
+    for heading in ("Publications", "Languages", "Volunteer Work", "Positions of Responsibility"):
         resume = make_structured_resume(f"Experience\nDid stuff.\n\n{heading}\nSome content.")
         result = detect_sections(resume)
         assert result.sections[-1].section_type == SectionType.OTHER
         assert result.sections[-1].heading == heading
+
+
+def test_positions_of_responsibility_does_not_leak_into_preceding_skills_section():
+    # Regression test: found via real-data verification of skills
+    # extraction (Session 16) — "Positions of Responsibility" wasn't
+    # in ALIASES, so it and everything after it (job titles, club
+    # descriptions) bled into the preceding SKILLS section and got
+    # misparsed as skill items. Real resume layout, not synthetic.
+    text = (
+        "Skills\n"
+        "Languages: Python, SQL.\n\n"
+        "Positions of Responsibility\n"
+        "General Secretary, Sports Club\n"
+        "Organized events for the club."
+    )
+    resume = make_structured_resume(text)
+
+    result = detect_sections(resume)
+
+    assert [s.section_type for s in result.sections] == [SectionType.SKILLS, SectionType.OTHER]
+    assert result.sections[0].content == "Languages: Python, SQL."
+    assert "General Secretary" not in result.sections[0].content
 
 
 def test_truly_unknown_heading_still_treated_as_content():

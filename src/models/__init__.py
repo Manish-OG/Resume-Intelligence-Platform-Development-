@@ -5,6 +5,7 @@ from .sectioned_resume import SectionedResume
 from .contact_info import ContactInfo
 from .candidate_name import CandidateName
 from .resume_entry import ResumeEntry
+from .resume_skills import ResumeSkills
 
 __all__ = [
     "ParsedResume",
@@ -15,4 +16,5 @@ __all__ = [
     "ContactInfo",
     "CandidateName",
     "ResumeEntry",
+    "ResumeSkills",
 ]

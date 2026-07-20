@@ -19,7 +19,7 @@
 - ML Engineer
 - GenAI Engineer
 
-**Current Version:** v0.11.0
+**Current Version:** v0.13.0
 
 **Current Status:** Active Development
 
@@ -27,41 +27,38 @@ Current Milestone:
 Resume Intelligence Engine (In Progress)
 
 Latest Completed Milestone:
-Embeddings module hardened and verified (`src/embeddings/encoder.py`, `prepare_resume_embedding_text()`) — not yet wired into ingestion or persisted
+Skill matching — `/rank` now exposes a second real signal (`skill_score`) alongside `semantic_score`; `Scorer`'s weighted blend still deferred (experience/education remain unreal)
 
-**Overall Progress:** ~63%
+**Overall Progress:** ~71%
 
-Caveat on that number (updated Session 14, first written Session 8):
-~63% reflects a solid, well-tested foundation on both ingestion sides
-(resume and Job Description), each reachable end-to-end through a
-real, tested, persisting HTTP endpoint, plus a verified (but not yet
-wired anywhere) Embeddings module. It does **not** mean 63% of the
-working product described in the Vision below exists — nothing yet
-connects a `Job` to its candidates: no embedding is computed during
-ingestion, no vector is stored anywhere, similarity/scoring/feedback
-don't exist, `/rank`/`/results`/`/download` are stubs, and the actual
-frontend is still scaffold. See Section 12 (Module Status) and
-Section 18 (Known Technical Debt) for the honest breakdown.
+Caveat on that number (updated Session 16, first written Session 8):
+~71% reflects real, composed, end-to-end functionality: both ingestion
+sides persist real rows, and `POST /rank` genuinely ranks every
+persisted resume against a job using two real signals — semantic
+similarity and skill overlap — both verified against real data
+(Section 14). It does **not** mean 71% of the working product
+described in the Vision below exists: ranking is still missing
+experience/education scoring, `Scorer`'s weighted blend stays unwired,
+nothing is persisted to `Score`, `/results`/`/download` remain stubs,
+feedback generation doesn't exist, and the actual frontend is still
+scaffold. See Section 12 (Module Status) and Section 18 (Known
+Technical Debt) for the honest breakdown.
 
-Git Note (updated Session 14, first written Session 8): Session 9
-through Session 13's work (name extraction, `Resume`/`Candidate`
-persistence, education/experience entry extraction, Job Description
-ingestion) was committed and pushed at the end of Session 13 — PR #3,
-merged to `main` as `af35353`. That is the last commit on `main`, and
-it matches `origin/main`.
+Git Note (updated Session 16, first written Session 8): all work
+through Session 14 (Embeddings module hardening) was committed and
+pushed — PR #4, `a54d584`. That is still the last commit on `main` —
+**both Session 15 (`POST /rank`) and Session 16 (skill matching) are
+uncommitted working-tree state as of this writing**, sitting together
+in one working tree (two milestones' worth of un-pushed work, not
+one). Verified directly via `git log`/`git status`, not assumed from
+a prior note. If a new session finds this note still true, confirm
+with the user whether to commit before doing further work — recurring
+every session because commits happen at the user's discretion, not
+automatically.
 
-Session 14's work (Embeddings module hardening — `prepare_resume_embedding_text()`
-in `src/pipeline.py`, changes to `src/embeddings/encoder.py`, new
-`pytest.ini`, new test files) is uncommitted working-tree state as of
-this writing. If a new session finds this note still true, confirm
-with the user whether to commit before doing further work — this
-recurs every session because commits happen at the user's discretion,
-not automatically.
-
-Also still untracked, unrelated to any of the above and unresolved
-across several sessions: a stray 0-byte file named `extract` at the
-repo root, no git history, cause unknown. Harmless; ask the user
-before deleting it, don't just clean it up silently.
+(The previously-noted stray `extract` file was resolved and deleted
+with the user's explicit permission in an earlier session; no longer
+present.)
 
 ------------------------------------------------------------------------
 
@@ -299,13 +296,13 @@ Parser - Extract raw PDF text - Return ParsedResume - No cleaning (also reused a
 
 Preprocess - Cleaning - Normalization - Section detection
 
-Extraction - Pull structured facts out of detected sections (contact info, name, and education/experience entries now; skills entries planned)
+Extraction - Pull structured facts out of one document's detected sections (contact info, name, education/experience entries, and skills list now — all single-document, never compares two documents)
 
 Embeddings - Generate vectors only
 
 Similarity - Compute similarity
 
-Scorer - Weighted scoring
+Scorer - Weighted scoring; also owns document-to-document comparison (e.g. `compute_skill_score()` comparing a resume's skills against a JD) — Extraction never compares two documents, Scorer does
 
 Feedback - Human-readable explanations
 
@@ -479,6 +476,26 @@ Reason
 Deliberately kept to structural fields only (title/dates/details) — not decomposed into semantic fields (degree, GPA, location, company, role). No reliable text-only delimiter exists to split those apart from plain extracted text; attempting it would risk confidently-wrong structured data. See Section 11's design decision for the full reasoning, including the real hand-traced evidence this was tested against.
 
 `title` documents an implementation rule (the nearest non-blank line preceding a recognized date line), not a claim that every resume places the institution/company there — see Section 11.
+
+---
+
+## ResumeSkills
+
+Purpose
+
+Flat list of skills extracted from a resume's SKILLS section.
+
+Fields
+
+- skills (tuple[str, ...])
+
+Produces
+
+Skills extraction (`src/extraction/skills_extractor.py`)
+
+Reason
+
+A single field, unlike `ResumeEntry`'s three — still wrapped in a dataclass rather than passed around as a bare tuple, for consistency with this project's established "every extraction concept returns a typed domain object" convention (`CandidateName` set this precedent for a single-field case). Case-insensitively deduplicated at extraction time so a skill listed twice doesn't distort downstream matching ratios (see `compute_skill_score()`, `src/scorer/skill_matcher.py`).
 
 All domain models are immutable (`frozen=True`) value objects.
 
@@ -1054,6 +1071,234 @@ Status: Accepted. Verified: default `pytest` is 95 tests in ~1.6 sec;
 
 ------------------------------------------------------------------------
 
+### `/rank` bypasses `Scorer` and does not persist `Score` rows
+
+Reason: `ScoreComponents` expects four signals (`semantic`, `skills`,
+`experience`, `education`); only `semantic` is computable today —
+nothing extracts a skills list to match against a JD, and nothing
+scores experience/education relevance. Feeding `compute_score()` today
+would mean fabricating three of four inputs (e.g. `0.0`), the exact
+placeholder-data anti-pattern rejected at every prior decision point
+in this project (unused `ParsedResume.status`/`.errors` removed in
+Session 3; `Candidate.name` never faked when extraction fails;
+`Job.title` required as real user input specifically because no
+heuristic could be validated). Running one real signal through
+weighting machinery built for four would just rescale the same number
+while implying sophistication that doesn't exist. `/rank` ranks by raw
+cosine similarity instead; `Scorer` stays unwired until skill/
+experience/education scoring are real.
+
+The `Score` table's four score columns are all `NOT NULL`, so
+persisting a row today hits the identical fabrication problem at the
+DB layer — same reasoning, not persisted this milestone. Considered
+and rejected: making the three missing columns nullable now. Cross-
+reviewed with ChatGPT, which argued this would be churn without
+long-term benefit — those columns aren't optional by design, they're
+incomplete because the feature isn't built yet, and the schema would
+just get tightened again the moment real `Scorer` wiring lands.
+Direct, accepted consequence: `/results` stays a stub too — there's
+nothing persisted for it to retrieve.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Embeddings computed on-demand at `/rank` time, not cached or persisted
+
+Reason: this was explicitly deferred from the Embeddings milestone to
+"whenever `/rank` gets built" — that's now. Realized as planned:
+`rank_resumes_against_job()` calls `build_resume_embedding()`/
+`build_job_embedding()` fresh on every `/rank` call. Reinforced by a
+detail only fully visible once implementing this: ranking a *stored*
+resume already requires reconstructing `SectionedResume` from
+`Resume.raw_text` via `clean_text()` + `detect_sections()`, since only
+the flat raw text was ever persisted (an earlier, separate decision).
+Given that recomputation is already unavoidable, not caching the
+embedding either is the consistent choice, not a shortcut — caching
+would only eliminate one relatively cheap step while introducing real
+open problems (cache invalidation if the model version ever changes,
+a persistence format decision for a float vector) with no evidence
+yet that `/rank` latency is a real problem worth solving.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `/rank` compares a Job against every persisted `Resume`
+
+Reason: no schema exists for applications, candidate pools, or
+job-to-resume assignments — `Resume` rows aren't associated with any
+particular `Job` at upload time. There is no principled way to define
+a subset of resumes to rank without inventing a new business rule this
+milestone doesn't need. Recorded explicitly (per ChatGPT cross-review)
+so a future session doesn't wonder whether "rank everything" was
+intentional or an oversight: **until an application/job-assignment
+concept exists, `/rank` compares the selected `Job` against every
+`Resume` stored in the system.**
+
+Status: Accepted; revisit if/when a concept of "candidates applied to
+this job" is introduced.
+
+------------------------------------------------------------------------
+
+### Shared `build_resume_embedding()`/`build_job_embedding()` helpers, to prevent pipeline divergence
+
+Reason: `/rank` is the first feature with two independent code paths
+that both prepare resume/JD text (upload-time preprocessing, and
+rank-time re-derivation from stored `raw_text`). ChatGPT cross-review
+flagged this as the biggest new risk in this milestone — not
+embeddings or similarity, but "pipeline divergence": if the two paths
+ever prepared text differently, semantic comparisons would become
+silently inconsistent depending on where a resume entered the system.
+Mitigated by making `build_resume_embedding()` (`src/pipeline.py`) and
+`build_job_embedding()` (`src/job_pipeline.py`) the single shared path
+each side goes through — `src/ranking.py` calls these rather than
+re-implementing `clean_text` → `detect_sections` →
+`prepare_resume_embedding_text` → `encode` itself. Kept in
+`pipeline.py`/`job_pipeline.py`, not in `src/embeddings/`, for the
+same domain-agnostic-encoder reasoning as `prepare_resume_embedding_text()`
+(Section 11, Session 14).
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `sentence_transformers` import made lazy inside `get_model()`
+
+Reason: found while implementing, not anticipated in the design brief.
+Once `app/backend/api/routes.py` imports `src/ranking.py` (→
+`src/pipeline.py` → `src/embeddings/encoder.py`), every API test using
+the `client` fixture — including `/upload-resume`/`/upload-job` tests
+that never touch `/rank` — would transitively import
+`sentence_transformers`/`torch` merely by importing `app.backend.main`,
+silently re-breaking the "fast by default" test suite property
+established in Session 14, without any test actually calling
+`encode()`. Fixed by moving `from sentence_transformers import
+SentenceTransformer` inside `get_model()`'s body instead of
+`encoder.py`'s module top level — importing the module is now cheap;
+only an actual call to `get_model()`/`encode()` pays the real cost.
+Verified: default `pytest` stayed at ~1.3-1.5 sec (102 tests) after
+wiring the route in, confirmed by re-running the suite immediately
+after each new import was added, not assumed. This also made mocking
+`build_resume_embedding()`/`build_job_embedding()` in fast unit tests
+actually work (unlike the failed mocking attempt in Session 14, where
+`encoder.py`'s top-level import defeated it regardless of what was
+mocked) — see Section 13.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Skill matching: search the JD for the candidate's own extracted skills, not an independent JD skill list
+
+Reason: two options were weighed. (A) a curated global skill
+dictionary — rejected, since unlike the small, closed `ALIASES`
+vocabulary for section headings, a "known skills" list has no natural
+bound and would always be incomplete, with constant maintenance cost.
+(B, chosen) search the JD's text for each of the candidate's own
+extracted skills — no external vocabulary needed, since the search
+terms come from what's already reliably extracted per-resume.
+Cross-reviewed with ChatGPT, which agreed and specifically credited
+Option B with keeping extraction (document-local) and scoring
+(document-to-document comparison) as clean, separate responsibilities.
+
+Honest limitation, documented rather than silently accepted: this
+answers "what fraction of this candidate's declared skills appear in
+the JD," not "what skills does the JD require that the candidate is
+missing." The second question needs an independently extracted JD
+skill list, which there is no real JD corpus to validate a heuristic
+against (same constraint that blocked JD-title extraction in an
+earlier session). Left for a future Feedback milestone, not attempted
+without evidence.
+
+`skill_score = 0.0` for a resume with no extracted skills (0/0
+handled explicitly, not a `ZeroDivisionError`).
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Skill matching uses lookaround boundaries, not `\b` — verified empirically, not assumed
+
+Reason: ChatGPT cross-review flagged that Python's `\b` is defined
+around word characters (`[A-Za-z0-9_]`) and asked that punctuation-
+heavy skills (`C++`, `C#`, `.NET`, `Node.js`, `Draw.io`) be verified
+before relying on `\b` universally, rather than trusted on intuition.
+Verified directly by running both approaches against real test cases:
+```
+skill      naive \b     lookaround   text
+C++        False        True         'Familiar with C++ and Java'
+C#         False        True         'Experience in C# and .NET'
+.NET       False        True         'Experience in C# and .NET development'
+Node.js    True         True         'Experience with Node.js development'
+Draw.io    True         True         'Diagrams made with Draw.io'
+Java       False        False        'Experience with JavaScript frameworks'
+SQL        False        False        'Experience with PostgreSQL'
+```
+Naive `\b` silently fails on `C++`/`C#`/`.NET` — a real bug that would
+have shipped if the concern had been dismissed as theoretical. Cause:
+`\b` requires a word/non-word transition, and both the trailing `+` in
+"C++ " and the following space are non-word characters, so no
+transition exists. Fixed with lookaround assertions instead —
+`(?<![A-Za-z0-9]){skill}(?![A-Za-z0-9])` — which only checks whether
+the characters immediately outside the match are alphanumeric,
+correctly handling all seven test cases including the two negative
+controls (`Java` not matching inside `JavaScript`, `SQL` not matching
+inside `PostgreSQL`).
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Alias/synonym matching (Git↔GitHub, SQL↔PostgreSQL) explicitly out of scope
+
+Reason: current matching is exact token matching after normalization
+(case-insensitive, boundary-matched). "Git" does not match "GitHub" in
+a JD; "SQL" does not match "PostgreSQL". Technically consistent, but a
+recruiter might reasonably expect otherwise. Per ChatGPT cross-review:
+documented explicitly rather than solved now, since a synonym/alias
+dictionary has the identical unbounded-vocabulary problem already
+rejected for skill extraction itself (see the Option A/B decision
+above) — building one would just relocate the same rejected approach
+one level down.
+
+Status: Accepted as a known, documented limitation; revisit only if a
+concrete need forces it (echoing the project's long-standing pattern
+for OCR, `phonenumbers`, generic heading detection, etc.).
+
+------------------------------------------------------------------------
+
+### `ALIASES` extended for "Positions of Responsibility" — a real bug found via real-data verification
+
+Reason: manually verifying skill extraction against the real sample
+resume (not just synthetic fixtures, per this project's standing
+practice) surfaced a real, concrete bug: the resume's SKILLS section
+was immediately followed by a "Positions of Responsibility"
+subheading — not in `ALIASES` — so per Session 6's already-documented,
+accepted behavior (an unrecognized heading bleeds into the currently-
+open section), everything after it (job titles, club descriptions,
+full sentences) got absorbed into SKILLS and then mis-split into 25+
+garbage pseudo-skills by `skills_extractor.py`. This is not a new
+extractor bug — `skills_extractor.py` behaved exactly as designed on
+the text it was given; the text itself was wrong, due to a pre-existing
+section-detection gap this milestone happened to be the first to
+surface concretely.
+
+Fixed the same way Session 6 established for exactly this situation:
+extended the curated `ALIASES[SectionType.OTHER]` vocabulary with
+"positions of responsibility" plus two closely related synonyms
+("extracurricular activities" / "extra-curricular activities") —
+not a generic heading-detection heuristic (already rejected in Session
+6), just one more entry in the same trusted, closed mechanism. Verified
+the fix directly: `build_resume_skills()` on the real resume now
+returns exactly the 15 real skills, not 40. Added a regression test
+(`test_positions_of_responsibility_does_not_leak_into_preceding_skills_section`)
+reproducing the real layout, not just a synthetic case.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
 ### `process_resume()` remains the single orchestration path for `/upload-resume`
 
 Reason: an earlier proposal (from ChatGPT's initial review) suggested
@@ -1081,19 +1326,19 @@ Status: Accepted.
 | Parser | Production (resumes only — see Job Description row) |
 | Domain Models | Production |
 | Preprocessing | Foundation Complete + Section Detection |
-| Extraction | Contact Info + Name + Education/Experience entries (structural fields only — see Section 11; skills not extracted) |
+| Extraction | Contact Info + Name + Education/Experience entries + Skills list (structural fields only for entries — see Section 11) |
 | Pipeline Orchestration | Wired live: `POST /upload-resume` calls `process_resume()` end-to-end |
 | Job Description Ingestion | Live — `POST /upload-job` parses a JD PDF (reusing `extract_text`/`clean_text`, not resume section detection/extraction), persists `Job`/`Upload`, manually verified. Title is user-provided, not extracted (no real JD data exists to validate a heuristic against). |
-| Embeddings | Hardened and verified against real pipeline output (`encode()` produces meaningful semantic similarity scores on the real sample resume vs. relevant/unrelated JDs), but not called from ingestion or `/rank` yet — no consumer exists. `prepare_resume_embedding_text()` (resume-specific text prep) lives in `src/pipeline.py`, not in `src/embeddings/`, which stays domain-agnostic. |
-| Similarity | Scaffold — `cosine_similarity()` exists, never called |
-| Scorer | Initial — `compute_score()` exists with hardcoded weights, never fed real similarity/extraction data |
+| Embeddings | Hardened, verified, and now live — `encode()` is called for real by every `/rank` request via `build_resume_embedding()`/`build_job_embedding()`. `prepare_resume_embedding_text()` (resume-specific text prep) lives in `src/pipeline.py`, not in `src/embeddings/`, which stays domain-agnostic. |
+| Similarity | Live — `cosine_similarity()` is called for real by every `/rank` request, verified against real data (scores in a sane range, correct relative ordering). |
+| Scorer | `compute_skill_score()` is live and real (`src/scorer/skill_matcher.py`), called by every `/rank` request; `compute_score()`'s weighted blend is still unwired — 2 of 4 signals (experience/education) remain uncomputable, and `/rank` continues to expose `semantic_score`/`skill_score` as independent fields rather than a blended total (see Section 11). |
 | Feedback | Scaffold — `generate_feedback()` exists, never called |
-| Database | `Upload`, `Candidate`, `Resume` written by `/upload-resume`; `Upload`, `Job` written by `/upload-job` (both verified against real data); `Score` and `Feedback` remain entirely unpopulated — nothing computes a score or feedback yet |
-| Backend | Partially functional — `POST /upload-resume` and `POST /upload-job` are both live, tested, and persist real rows; `/rank`, `/results`, `/download` are still `raise NotImplementedError` stubs |
+| Database | `Upload`, `Candidate`, `Resume` written by `/upload-resume`; `Upload`, `Job` written by `/upload-job` (both verified against real data); `Score` and `Feedback` remain entirely unpopulated — `/rank` deliberately does not write `Score` rows (see Section 11) |
+| Backend | `POST /upload-resume`, `POST /upload-job`, and `POST /rank` are all live, tested, and manually verified against real data; `/results` and `/download` are still `raise NotImplementedError` stubs (`/results` has nothing persisted to retrieve yet — see Section 11) |
 | Frontend | Scaffold — Streamlit UI renders upload widgets and a "Rank" button, but the handler just shows `"Ranking pipeline not implemented yet"`; no `src/` imports, no API calls |
 | Export | **Not started.** No module exists despite being the final step in the Section 4 architecture diagram. |
 
-**Honest summary**: resume ingestion (parse → preprocess → detect sections → extract contact info + name + education/experience entries) and Job Description ingestion (parse → clean → persist) are both solid, tested, and reachable end-to-end through real HTTP routes (`POST /upload-resume`, `POST /upload-job`), both durably persisting real rows. Both of the Vision's required inputs now exist. Everything after that — embeddings, similarity, scoring, feedback, the remaining 3 routes, the actual frontend, and export — is either a disconnected stub or doesn't exist yet. Two end-to-end user flows (upload a resume; upload a JD) are currently possible; nothing connects them yet — no ranking, no scoring, no export.
+**Honest summary**: resume ingestion, Job Description ingestion, and ranking now all work end-to-end through real, tested, manually-verified HTTP routes (`POST /upload-resume`, `POST /upload-job`, `POST /rank`), and `/rank` now exposes two genuine signals — semantic similarity and skill overlap — both verified on real data, including a real bug (garbage pseudo-skills from an unrecognized "Positions of Responsibility" heading bleeding into SKILLS) found and fixed via that verification, not just assumed correct. What's still missing: experience/education scoring don't exist, so `Scorer`'s weighted blend stays unwired and nothing is persisted to `Score`; `/results`/`/download` remain stubs; feedback generation doesn't exist; the frontend is still scaffold. Three end-to-end user flows are possible (upload a resume; upload a JD; rank all resumes against a JD, now with two real signals instead of one); nothing explains *why* a candidate ranked where they did yet — that's Feedback's job, still unbuilt.
 ------------------------------------------------------------------------
 
 # 13. Testing Status
@@ -1128,9 +1373,23 @@ Current
 
 ✅ Real-model embedding tests passing, run separately from the default suite (see Section 11's test-strategy decision): vector shape/dtype, similar-vs-unrelated semantic scoring, caching behavior
 
+✅ `rank_resumes_against_job()` unit tests passing (fast — mocked embeddings, real `cosine_similarity()`): empty input, single resume, descending sort, identical-score stability, field mapping
+
+✅ `/rank` API tests passing: 404 on nonexistent job, empty list when no resumes exist
+
+✅ First genuine whole-system integration test passing (`pytest -m slow`): real resume + JD upload → real embeddings → real ranking, verified a domain-relevant candidate outranks an unrelated one; plus determinism-across-calls and score-range checks
+
+✅ `extract_skills()` tests passing: real sample resume layout (hand-traced), flat comma list, trailing-period handling, case-insensitive dedup, empty section
+
+✅ `compute_skill_score()` tests passing: exact/partial/zero matches, case-insensitivity, empty-skills 0.0, and the punctuation-heavy cases that empirically broke naive `\b` (C++, C#, .NET) plus the negative controls (Java≠JavaScript, SQL≠PostgreSQL)
+
+✅ Section detector regression test passing, reproducing the real "Positions of Responsibility" bleed-through bug found via manual verification
+
+✅ `/rank` end-to-end integration test extended to assert real `skill_score` values, not just `semantic_score`
+
 Current Result
 
-99 tests total — 95 / 95 passing by default (`pytest`, ~1.6 sec); 4 / 4 additional real-model tests passing on demand (`pytest -m slow`, ~17 sec)
+129 tests total — 123 / 123 passing by default (`pytest`, ~1.6-1.9 sec); 7 / 7 additional real-model tests passing on demand (`pytest -m slow`, ~17-24 sec)
 
 ------------------------------------------------------------------------
 
@@ -1200,6 +1459,42 @@ Completed
     ~17 sec (4 tests) — including catching and fixing a real bug where
     an early version cost ~20 sec by default despite marker-based
     deselection (see Section 11).
+-   `/rank` manually verified against a live `uvicorn` server with
+    real data: uploaded the real sample resume (Manish Kumar Gupta,
+    actual ECE/electronics background) alongside a synthetic,
+    unrelated pastry-chef resume, uploaded a JD requesting an
+    electronics engineer, called `/rank`. Correct result: the real
+    resume scored 0.189 vs. the chef resume's 0.137 — meaningfully
+    higher, correctly ordered. Also verified 404 on a nonexistent
+    `job_id` live, not just in tests.
+-   Confirmed by direct re-measurement (not assumed) that wiring
+    `/rank` into the route did not regress the "fast by default" test
+    suite property established in Session 14 — re-ran `pytest` after
+    each new import was added while implementing, catching the
+    transitive-import risk (see Section 11's lazy-import decision)
+    before it could ship.
+-   `\b` vs. lookaround boundary matching empirically compared before
+    choosing, not decided from documentation alone: ran both against
+    7 real test cases (C++, C#, .NET, Node.js, Draw.io, Java-vs-
+    JavaScript, SQL-vs-PostgreSQL) and confirmed naive `\b` fails
+    silently on the three symbol-suffixed skills. Table recorded in
+    Section 11.
+-   Skill extraction manually verified against the real sample
+    resume — and this verification caught a real bug: the first run
+    produced 40 "skills," most of them full sentences from a
+    "Positions of Responsibility" section that bled into SKILLS.
+    Fixed via an `ALIASES` extension, re-verified: exactly 15 real
+    skills recovered, matching the hand-traced expectation. Re-ran
+    the full test suite after the fix — no regressions.
+-   Skill matching manually verified end-to-end against a live
+    `uvicorn` server with the real sample resume and the same
+    electronics JD used for the semantic-score verification:
+    `skill_score: 0.0` — correctly, honestly reflecting that the
+    resume's SKILLS section lists "Verilog" but the JD asks for
+    "VHDL" (different strings, no alias awareness), even though
+    `semantic_score: 0.189` correctly reflects the real underlying
+    domain relevance. A concrete, real illustration of the documented
+    exact-matching limitation (Section 11), not a hypothetical one.
 
 ------------------------------------------------------------------------
 
@@ -1499,14 +1794,59 @@ Lessons
 
 ------------------------------------------------------------------------
 
+## `/rank` Wiring (Session 15, Claude, cross-reviewed with ChatGPT)
+
+### Achievements
+
+- Identified two real gaps before designing: `ScoreComponents` needs four inputs but only `semantic` is computable (nothing extracts skills or scores experience/education), and `Score`'s four columns are all `NOT NULL` so persisting a row today would mean fabricating three of four values. Recommended bypassing `Scorer` and not persisting `Score` this milestone; ChatGPT independently agreed and specifically argued against a nullable-columns migration as churn without long-term benefit — the columns aren't optional by design, they're incomplete because the feature isn't built.
+- Cross-reviewed the full design with ChatGPT, which flagged "pipeline divergence" as the milestone's biggest new risk — the first time two independent code paths (upload-time preprocessing, rank-time re-derivation from stored `raw_text`) both prepare resume/JD text for embedding, with real risk of silently drifting apart if not shared.
+- Implemented shared `build_resume_embedding()` (`src/pipeline.py`) and `build_job_embedding()` (`src/job_pipeline.py`) per that concern, so `src/ranking.py` never re-implements text preparation itself.
+- Implemented `src/ranking.py`'s `rank_resumes_against_job()` — DB-session-free, sorted descending by semantic similarity, `[]` for empty input, never raises.
+- Found a real problem while implementing that neither the design brief nor ChatGPT's review anticipated: once `app/backend/api/routes.py` imports `src/ranking.py` → `src/pipeline.py` → `src/embeddings/encoder.py`, *every* API test using the `client` fixture — including `/upload-resume`/`/upload-job` tests that never touch `/rank` — would transitively import `sentence_transformers`/`torch` just from importing `app.backend.main`, silently re-breaking the fast-by-default test suite fixed in Session 14. Fixed by making the `sentence_transformers` import lazy inside `get_model()` rather than at `encoder.py`'s module top level. Verified immediately by re-running `pytest` after each new import was added, not assumed correct.
+- That same fix, as a side effect, made mocking work for the first time in this area — Session 14's mocking attempt failed because `encoder.py`'s top-level import defeated it regardless of what was mocked; with the lazy import, `monkeypatch.setattr("src.ranking.build_resume_embedding", ...)` works cleanly, enabling genuinely fast unit tests for `rank_resumes_against_job()`'s sorting/orchestration logic.
+- Wired `POST /rank`: 404 on a nonexistent `job_id`, joins `Resume`+`Candidate` (no ORM relationship exists between them, so an explicit join condition is used), returns results sorted descending.
+- Added 10 new tests across three files (5 fast unit tests with mocked embeddings, 2 fast API tests, 3 slow real-model tests including the project's first genuine whole-system integration test — real upload, real embeddings, real ranking, composed together) — 109 total, 102 fast + 7 slow.
+- Manually verified against a live server with real data: the actual sample resume (genuine ECE/electronics background) correctly outranked a synthetic, unrelated pastry-chef resume against an electronics-engineer JD (0.189 vs. 0.137).
+
+### Lessons
+
+- A risk ChatGPT correctly flagged in the abstract (pipeline divergence) and a risk found only by actually wiring the code together (transitive test-suite slowdown) are both real, and neither substitutes for the other — cross-review catches architectural risks; running the actual code catches implementation risks. This milestone needed both.
+- The same lazy-import fix served two different purposes depending on when it mattered: preventing an unrelated import chain from paying a cost (the actual motivating problem here), and — as a side effect — finally making a mocking strategy work that had failed for an unrelated reason in Session 14. Worth remembering that fixing the root cause of one problem sometimes resolves a second, previously-abandoned approach for free.
+- Re-running the fast test suite after every single new cross-module import, not just at the end of a milestone, caught the transitive-import regression before it could ship — the same "verify continuously, not just once at the end" discipline this project has leaned on all session, applied at finer granularity than usual.
+
+------------------------------------------------------------------------
+
+## Skill Matching (Session 16, Claude, cross-reviewed with ChatGPT)
+
+### Achievements
+
+- Hand-traced skill extraction against the real sample resume's SKILLS section before designing, same discipline as every extraction milestone this session; verified the "text after first colon, or whole line" heuristic against all three lines including the "Draw.io." trailing-period edge case.
+- Weighed two designs for the JD-side matching signal: a curated global skill dictionary (rejected — unbounded vocabulary, same problem already rejected for section headings) vs. searching the JD for the candidate's own extracted skills (chosen — no external vocabulary needed). Cross-reviewed with ChatGPT, which agreed and credited the chosen design with keeping extraction (document-local) and scoring (document-to-document) as clean, separate responsibilities.
+- Explicitly documented, rather than silently accepted, two honest limitations raised in cross-review: `skill_score` answers "what fraction of the candidate's skills are relevant here," not "what does the JD require that's missing" (needs independent JD-skill extraction with no real corpus to validate it against); and matching is exact-token only, no alias awareness (Git≠GitHub, SQL≠PostgreSQL) — an alias dictionary would just relocate the same unbounded-vocabulary problem one level down.
+- ChatGPT asked that `\b` word-boundary behavior around punctuation-heavy skills (C++, C#, Node.js, Draw.io, .NET) be verified empirically before relying on it — ran both naive `\b` and a lookaround-based alternative against 7 real test cases and found naive `\b` **silently fails** on C++/C#/.NET (both characters bounding the match can be non-word, so no `\b` transition exists). Shipped the lookaround approach instead, verified against all 7 cases including the Java/JavaScript and SQL/PostgreSQL negative controls.
+- Refactored `src/pipeline.py` to extract a shared `_reconstruct_sections()` helper before adding `build_resume_skills()`, so it and `build_resume_embedding()` both go through identical raw-text reconstruction — directly applying Session 15's "pipeline divergence" lesson to two rank-time helpers, not just upload-time vs. rank-time.
+- Manually verified skill extraction against the real sample resume and found a real bug: 40 "skills" extracted instead of ~15, most of them full sentences. Root cause: a "Positions of Responsibility" subheading (not in `ALIASES`) bled its content into the preceding SKILLS section per Session 6's already-documented, accepted section-detection behavior — `skills_extractor.py` behaved correctly on the text it was given; the text itself was wrong. Fixed the same way Session 6 established for this exact situation: extended `ALIASES[SectionType.OTHER]`, not the extractor. Re-verified: exactly 15 real skills. Added a regression test reproducing the real layout.
+- Wired `skill_score` into `RankedCandidate`/`/rank`'s response as an independent field alongside `semantic_score` — not blended, since `Scorer`'s weighted blend still needs experience/education to exist first. Sort order unchanged (still `semantic_score` only) — per ChatGPT, adding a field to the response isn't the same decision as using it to rank.
+- Added 20 new tests across four files (extraction, matching, ranking-with-skills, integration) — 129 total, 123 fast + 7 slow (six of seven pre-existing slow tests unaffected; one integration test extended).
+- Manually verified end-to-end against a live server with real data: `skill_score: 0.0` for the real resume against the electronics JD — an honest, correct result (SKILLS lists "Verilog," JD asks for "VHDL," different strings) that concretely illustrates the documented exact-matching limitation.
+
+### Lessons
+
+- A concern ChatGPT raised as "worth verifying" (not "this is definitely broken") turned out to be a real, silent bug — `\b` failing on C++/C#/.NET wouldn't have raised an exception or an obviously wrong result, it would have just silently under-counted matches forever. Treating "please verify this" requests as seriously as "this is broken" reports is worth continuing.
+- The "Positions of Responsibility" bug is the clearest example yet in this project of a latent, already-documented limitation (Session 6's accepted heading-bleed gap) only becoming a *concrete* problem once a new consumer (skill extraction) started actually depending on section boundaries being clean. The original decision to accept the gap wasn't wrong — but accepting a gap doesn't mean it stops mattering once something new is built on top of it; real-data verification at each new milestone is what keeps catching this, not a one-time audit.
+- Refactoring to share code (`_reconstruct_sections()`) before adding the second caller, rather than after, avoided ever having two independently-maintained reconstruction paths to begin with — cheaper than fixing divergence after the fact, and a direct, concrete application of a lesson from the immediately preceding session rather than an abstract principle.
+
+------------------------------------------------------------------------
+
 # 16. Current TODO
 
 ## High Priority
 
-- Wire the remaining 3 stub routes (`/upload-job` is now done): `/rank`, `/results`, `/download` — `/rank` depends on Embeddings/Similarity/Scorer, none of which exist yet
-- Begin the Embeddings module — the next unbuilt architecture stage (Section 4), now that both required inputs (resumes, job descriptions) are ingested and persisted
-- Extend `ALIASES` for further common headings not yet recognized (e.g. Certifications synonyms, Summary synonyms)
-- **Not yet scheduled but large and unstarted**: Job Description ingestion (no parser/model/route exists — the Vision requires it, nothing built so far touches it) and an Export module (final architecture step, doesn't exist).
+- Build real skill/experience/education scoring so `Scorer` can finally be wired — `/rank` is semantic-only today by deliberate, documented choice (Section 11), not because the other signals were forgotten
+- Score experience/education so `Scorer`/`Score` persistence can finally be wired — 2 of 4 signals now real (`semantic_score`, `skill_score`); this is what's left
+- Wire the remaining 2 stub routes (`/results`, `/download`) — `/results` needs `Score` persistence to exist first (still deferred, Section 11)
+- Extend `ALIASES` for further common headings not yet recognized (e.g. Certifications synonyms, Summary synonyms) — same mechanism just used for "Positions of Responsibility"
+- Export module — final architecture step (Section 4), doesn't exist yet
 
 ## Medium
 
@@ -1526,22 +1866,26 @@ Lessons
 
 Goal
 
-One clear recommendation: begin **Similarity + `/rank` wiring** — the natural next step now that Embeddings is built and verified. This is where the decisions explicitly deferred this session belong together: compute-on-demand vs. cache, whether to persist vectors (new `Resume`/`Job` columns or a new table), cache invalidation if the model ever changes, and batch encoding for scoring many candidates against one job at once.
+One clear recommendation: **experience/education scoring** — the last piece needed before `Scorer`/`Score` persistence can finally be wired. Two of four `ScoreComponents` signals are now real (`semantic_score`, `skill_score` — Session 16); this is what's left.
 
-Tasks (if Similarity/`/rank`)
+Tasks
 
-- Design the embedding target for a Job Description — `Job.description` is the only text available (no JD section structure exists, by deliberate design — see Section 11); this side has no fork the way the resume side did.
-- Decide storage: persist embeddings (new column/table) vs. compute on every `/rank` call. This is now the central open question — deferred, not forgotten.
-- Decide how `/rank` maps to `ScoreComponents.semantic` (`src/scorer/weighted_scorer.py` already expects a single float per resume-job pair) — `cosine_similarity()` is ready to produce that.
-- Consider batch encoding (`encode(list[str])`) for ranking many candidates against one job — the underlying `SentenceTransformer.encode()` already supports it; today's `encode(text: str)` signature was deliberately left forward-compatible with this (see Section 18).
-- Add comprehensive unit tests; verify against real data (the sample resume, and a generated JD), same discipline as every prior milestone this session. Remember the test-speed lesson from this session: keep real-model tests `slow`-marked, with imports deferred inside test functions, not at module level.
+- Design a heuristic for turning `ResumeEntry.dates` (already extracted, but only as an unparsed string like "Sep 2023 – 2027") into a comparable duration/recency signal — needs hand-tracing against the real sample resume's actual dates before committing to a parsing approach, same discipline as every prior extraction milestone.
+- Decide what a JD's experience/education *requirement* looks like as extractable structure (e.g. "3+ years required," "Bachelor's degree required") — another JD-side gap, same category of problem `parse_job_description()` (JD has no section structure) and skill matching (JD has no independent skill list) each already navigated by sidestepping independent JD extraction. Consider whether the same sidestep applies here (e.g., check for the candidate's own experience duration/degree level appearing in JD-recognizable patterns) rather than assuming a full JD-side parser is needed.
+- Add comprehensive unit tests; verify against real data (the sample resume's actual EDUCATION/EXPERIENCE entries).
+
+Once experience/education scoring is real, revisit wiring `Scorer`/`ScoreComponents` and persisting `Score` rows — both deliberately deferred since Session 15 (Section 11), not abandoned. At that point also reconsider whether `/rank`'s response should gain an aggregate score field (explicitly avoided so far per ChatGPT's "don't imply a complete ranking methodology before one exists" reasoning) now that all four signals would finally be real.
 ------------------------------------------------------------------------
 
 # 18. Known Technical Debt
 
 -   Parser catches generic Exception for the fitz.open/get_text block
--   No API schemas yet
--   No relationships in SQLAlchemy models
+-   API schemas now exist (`app/backend/api/schemas.py`: `UploadResumeResponse`,
+    `UploadJobResponse`, `RankResponse`) but only cover the 3 live
+    routes; `/results`/`/download` will need their own once built.
+-   No relationships in SQLAlchemy models — `/rank`'s `Resume`-to-`Candidate`
+    join uses an explicit join condition (`Resume.candidate_id == Candidate.id`)
+    rather than an ORM relationship, since none is configured
 -   Preprocessing currently performs only safe normalization; section
     detection is a separate stage/function (`detect_sections()`), not
     merged into `preprocess()` — both are chained together in
@@ -1614,12 +1958,43 @@ Tasks (if Similarity/`/rank`)
     happens to look like an email/phone — `None`). No real resume
     seen so far exhibits this; documented as an accepted gap, not
     fixed with an untuned heuristic (e.g. a word-count cap).
--   The remaining 3 routes (`/rank`, `/results`, `/download`) are still
-    `raise NotImplementedError` stubs.
--   Embeddings has no persistence and no route wiring — `encode()` is
-    hardened and verified but never called from ingestion or any
-    route. Accepted (Section 11); deferred to the `/rank` milestone,
-    where storage/caching decisions belong together (see Section 17).
+-   The remaining 2 routes (`/results`, `/download`) are still
+    `raise NotImplementedError` stubs — `/results` needs `Score`
+    persistence to exist first, which is itself deliberately deferred
+    (see Section 11).
+-   `/rank` exposes `semantic_score`/`skill_score` as independent
+    fields, still sorts by `semantic_score` only — `skill_score` isn't
+    yet used for ordering, just returned. `Scorer`/`ScoreComponents`'s
+    weighted blend remains unwired (experience/education still aren't
+    real), and no `Score` row is ever persisted. All deliberate,
+    documented decisions (Section 11), not oversights; revisit once
+    experience/education scoring exist (see Section 17).
+-   Skill matching is exact-token only — no alias/synonym awareness
+    (Git≠GitHub, SQL≠PostgreSQL, JS≠JavaScript). Accepted (Section 11):
+    an alias dictionary has the same unbounded-vocabulary problem
+    already rejected for skill extraction itself. Revisit only if a
+    concrete need forces it.
+-   `compute_skill_score()` only answers "what fraction of the
+    candidate's declared skills are relevant to this JD" — not "what
+    skills does the JD require that the candidate is missing," which
+    needs independent JD-skill extraction with no real JD corpus to
+    validate a heuristic against. Left for a future Feedback milestone
+    (Section 11).
+-   `skills_extractor.py`'s heuristic doesn't handle a bullet-per-line
+    SKILLS layout ("• Python\n• SQL") — only category-prefixed and
+    flat comma-separated lists, the only formats seen in the one real
+    resume available. Documented gap, not guessed at without evidence.
+-   No candidate-pool/application concept exists in the schema —
+    `/rank` compares a `Job` against every `Resume` row in the system.
+    Deliberate (Section 11); revisit if "candidates applied to this
+    job" ever becomes a real requirement.
+-   Embeddings have no persistence — every `/rank` call recomputes
+    both the JD embedding and every resume embedding from scratch,
+    including re-deriving each resume's `SectionedResume` from stored
+    `raw_text`. Deliberate (Section 11: recomputation was already
+    unavoidable given `SectionedResume` itself is never persisted);
+    revisit if `/rank` latency becomes a demonstrated problem at
+    realistic resume-count scale.
 -   Embedding model version is unpinned beyond the string
     `"all-MiniLM-L6-v2"` — if that identifier's resolved weights ever
     change upstream, embeddings could shift subtly with no local
@@ -1637,8 +2012,11 @@ Tasks (if Similarity/`/rank`)
 -   `encode(text: str)` only exercises single-string input today; the
     underlying `SentenceTransformer.encode()` already accepts
     `list[str]` and returns a 2D array for batch input, so this isn't
-    blocked, just not implemented. Revisit when `/rank` needs to score
-    many candidates against one job without repeated model invocation.
+    blocked, just not implemented. `/rank` calls `encode()` once per
+    resume sequentially (N model invocations, not batched) — accepted
+    for now given measured warm inference (~20ms/call) makes even 50
+    resumes ≈1 second; revisit only if resume counts at realistic
+    scale demonstrate this as an actual bottleneck.
 -   No request-size validation on `/upload-resume` — `MAX_UPLOAD_SIZE_MB`
     is defined in config but not enforced. No cleanup/retention policy
     on `UPLOAD_DIR` — every uploaded file is kept indefinitely.
@@ -1745,6 +2123,17 @@ You should be able to explain:
 -   Why a "fast, mocked" test strategy for the encoder was abandoned after implementation, and what that reveals about mocking a module with heavy top-level imports
 -   Why marker-based test deselection alone didn't prevent a ~20 second regression, and what the actual fix was
 -   Why embedding dimensionality is never hardcoded anywhere in the codebase
+-   Why `/rank` bypasses `Scorer` and ranks on raw cosine similarity instead of a weighted blend
+-   Why no `Score` row is persisted, and why a nullable-columns migration was considered and rejected rather than adopted as a quick fix
+-   Why `/rank` compares a Job against every `Resume` in the system, and what would change that
+-   Why embeddings are computed fresh on every `/rank` call instead of cached, and how that decision connects to an earlier one (only `Resume.raw_text` is persisted, not `SectionedResume`)
+-   Why `build_resume_embedding()`/`build_job_embedding()` exist as shared helpers instead of `src/ranking.py` preparing text itself, and what risk that prevents
+-   Why making `sentence_transformers`'s import lazy was necessary once `/rank` existed, even though nothing about `/rank` itself required it directly
+-   Why skill matching searches the JD for the candidate's own extracted skills, rather than maintaining a curated global skills dictionary
+-   Why `skill_score` measures "relevant skills" rather than "missing skills," and what would be needed to answer the second question
+-   Why `\b` was empirically tested rather than trusted, what it got wrong for `C++`/`C#`/`.NET`, and how the lookaround fix differs
+-   Why the "Positions of Responsibility" bug wasn't actually a bug in the new skills extractor, and what that says about how bugs can hide in already-accepted, already-documented limitations until something new depends on them
+-   Why the `ALIASES` extension (not a code change to `skills_extractor.py`) was the correct fix, and how that traces back to a Session 6 precedent
 
 ------------------------------------------------------------------------
 
@@ -1884,3 +2273,24 @@ Completed (Session 14)
 - Added `pytest.ini` (`slow` marker, fast by default); added missing `cosine_similarity()` coverage; added `prepare_resume_embedding_text()` coverage.
 - Manually verified against real data: real sample resume's email confirmed absent from embedding text; a domain-matching JD scored meaningfully higher (0.169) than an unrelated one (0.019) via real `encode()` + `cosine_similarity()`.
 - PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points, corrected performance table).
+
+Completed (Session 15)
+
+- Identified two real gaps before designing: `ScoreComponents` needs four inputs but only `semantic` is computable; `Score`'s columns are all `NOT NULL` so persisting today would mean fabricating three values. Cross-reviewed with ChatGPT, which agreed on both and specifically argued against a nullable-columns migration as unnecessary churn.
+- Implemented shared `build_resume_embedding()`/`build_job_embedding()` helpers per ChatGPT's "pipeline divergence" concern, so `/rank` and any future caller prepare text identically rather than via two independently-maintained paths.
+- Implemented `src/ranking.py` (`rank_resumes_against_job()`) and wired `POST /rank`: 404 on missing job, ranks every persisted resume by semantic similarity, sorted descending.
+- Found and fixed a real problem neither the design brief nor ChatGPT's review anticipated: wiring `/rank` in would have transitively broken the fast-by-default test suite (Session 14) for tests that never touch `/rank`, since `app.backend.main` now imports the whole embeddings chain. Fixed by making `sentence_transformers`'s import lazy inside `get_model()`.
+- Added 10 new tests (109 total: 102 fast, 7 slow) including the project's first genuine whole-system integration test — real upload, real embeddings, real ranking, all composed together.
+- Manually verified against a live server with real data: the actual sample resume (genuine ECE background) correctly outranked an unrelated synthetic resume against an electronics-engineer JD (0.189 vs. 0.137); 404 verified live too.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — also caught and fixed several stale entries from before this session (outdated route counts, a "No API schemas yet" line that was no longer true).
+
+Completed (Session 16)
+
+- Hand-traced skill extraction against the real sample resume's SKILLS section; chose searching the JD for the candidate's own skills over a curated global dictionary, cross-reviewed and agreed with ChatGPT.
+- Empirically verified `\b` vs. lookaround boundary matching against 7 real test cases per ChatGPT's request — found naive `\b` silently fails on C++/C#/.NET, shipped the lookaround fix instead.
+- Refactored `src/pipeline.py` to share reconstruction logic (`_reconstruct_sections()`) before adding a second consumer, directly applying Session 15's pipeline-divergence lesson.
+- Manually verified against the real sample resume and found a real bug (40 garbage "skills" from an unrecognized "Positions of Responsibility" heading bleeding into SKILLS); fixed via the same `ALIASES` extension mechanism Session 6 established, not a change to the new extractor.
+- Wired `skill_score` into `/rank` as an independent field alongside `semantic_score` — not blended, sort order unchanged.
+- Added 20 new tests (129 total: 123 fast, 7 slow), including a regression test for the real bug found.
+- Manually verified end-to-end against a live server: `skill_score: 0.0` for the real resume against the electronics JD, correctly and honestly reflecting the exact-matching limitation (Verilog≠VHDL) even as `semantic_score` correctly captured the real domain relevance.
+- PROJECT_BIBLE synced with repository (version, domain models, design decisions, module responsibilities, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — also corrected a Git Note error caught before it was written (mistakenly assumed a PR had been merged without checking `git log` first).
