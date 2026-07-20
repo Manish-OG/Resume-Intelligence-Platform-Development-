@@ -19,7 +19,7 @@
 - ML Engineer
 - GenAI Engineer
 
-**Current Version:** v0.10.0
+**Current Version:** v0.11.0
 
 **Current Status:** Active Development
 
@@ -27,36 +27,36 @@ Current Milestone:
 Resume Intelligence Engine (In Progress)
 
 Latest Completed Milestone:
-Job Description ingestion (`POST /upload-job`) — the Vision's other required input now exists
+Embeddings module hardened and verified (`src/embeddings/encoder.py`, `prepare_resume_embedding_text()`) — not yet wired into ingestion or persisted
 
-**Overall Progress:** ~60%
+**Overall Progress:** ~63%
 
-Caveat on that number (updated Session 13, first written Session 8):
-~60% reflects a solid, well-tested foundation on both ingestion sides
+Caveat on that number (updated Session 14, first written Session 8):
+~63% reflects a solid, well-tested foundation on both ingestion sides
 (resume and Job Description), each reachable end-to-end through a
-real, tested, persisting HTTP endpoint. It does **not** mean 60% of
-the working product described in the Vision below exists — nothing
-yet connects a `Job` to its candidates: embeddings, similarity,
-scoring, feedback, `/rank`/`/results`/`/download`, and the actual
-frontend are all still stub/scaffold/nonexistent. See Section 12
-(Module Status) and Section 18 (Known Technical Debt) for the honest
-breakdown.
+real, tested, persisting HTTP endpoint, plus a verified (but not yet
+wired anywhere) Embeddings module. It does **not** mean 63% of the
+working product described in the Vision below exists — nothing yet
+connects a `Job` to its candidates: no embedding is computed during
+ingestion, no vector is stored anywhere, similarity/scoring/feedback
+don't exist, `/rank`/`/results`/`/download` are stubs, and the actual
+frontend is still scaffold. See Section 12 (Module Status) and
+Section 18 (Known Technical Debt) for the honest breakdown.
 
-Git Note (updated Session 13, first written Session 8): as of the end
-of Session 13, all of Session 9 through Session 13's work — name
-extraction, `Resume`/`Candidate` persistence, education/experience
-entry extraction, and Job Description ingestion (`src/extraction/name_extractor.py`,
-`src/extraction/entry_extractor.py`, `src/job_pipeline.py`,
-`app/backend/api/schemas.py`, plus changes to `src/pipeline.py`,
-`app/backend/api/routes.py`, `app/backend/main.py`, `src/database/db.py`,
-`src/models/__init__.py`) — is uncommitted working-tree state on
-`main`. The last commit on `main` is `f0d7e05` ("Remove stale
-resume_models.py"), which matches `origin/main`. This is about to be
-committed and pushed as of this writing; if a new session finds this
-note still true, confirm with the user whether to commit before doing
-further work — same situation Session 8 originally flagged, recurring
-because commits happen at the user's discretion, not automatically
-each session.
+Git Note (updated Session 14, first written Session 8): Session 9
+through Session 13's work (name extraction, `Resume`/`Candidate`
+persistence, education/experience entry extraction, Job Description
+ingestion) was committed and pushed at the end of Session 13 — PR #3,
+merged to `main` as `af35353`. That is the last commit on `main`, and
+it matches `origin/main`.
+
+Session 14's work (Embeddings module hardening — `prepare_resume_embedding_text()`
+in `src/pipeline.py`, changes to `src/embeddings/encoder.py`, new
+`pytest.ini`, new test files) is uncommitted working-tree state as of
+this writing. If a new session finds this note still true, confirm
+with the user whether to commit before doing further work — this
+recurs every session because commits happen at the user's discretion,
+not automatically.
 
 Also still untracked, unrelated to any of the above and unresolved
 across several sessions: a stray 0-byte file named `extract` at the
@@ -968,6 +968,92 @@ input contract.
 
 ------------------------------------------------------------------------
 
+### Embeddings: build and verify only, defer persistence/wiring to `/rank`
+
+Reason: no DB column exists to store a vector on `Resume`/`Job` (a
+schema decision on par with every other persistence decision made
+this project, none made casually), and the only thing that would ever
+consume a stored embedding — `/rank` — doesn't exist yet. Computing
+embeddings during `/upload-resume`/`/upload-job` now would mean
+generating and discarding a vector on every upload, adding startup
+latency and a new failure mode for zero user-visible benefit. Cross-
+reviewed with ChatGPT, which independently reached the same
+conclusion and added a concrete list of decisions that belong
+together at the `/rank` milestone rather than split across sessions:
+compute-on-demand vs. cache, whether to persist vectors, cache
+invalidation if the model ever changes, and batch processing.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Resume embedding text: `prepare_resume_embedding_text()` lives in `src/pipeline.py`, not in `src/embeddings/`
+
+Reason: the Embeddings module's contract (`encode(text: str) -> vector`)
+should stay completely domain-agnostic — it should not know what a
+resume, a `SectionedResume`, or a `SectionType.HEADER` is. This
+directly matches Section 7's pre-existing module responsibility,
+written before this milestone: "Embeddings — Generate vectors only."
+My first framing of this decision (Option A: embed raw_text, vs.
+Option B: have Embeddings itself filter out HEADER) missed that this
+was the real question — ChatGPT reframed it correctly: the resume-
+specific decision of *what text represents a resume* belongs to
+whichever module already understands resume structure, not to the
+encoder. Implemented as `prepare_resume_embedding_text(SectionedResume) -> str`
+in `src/pipeline.py` (sibling to `process_resume()`, not called by
+it — it's for a future consumer like `/rank`, not part of ingestion).
+It excludes the HEADER section (contact info carries no semantic
+signal for matching against a JD) and joins the rest in document
+order. Verified against the real sample resume: the email address is
+confirmed absent from the embedded text, and a JD matching the
+resume's actual domain (electronics/embedded systems) scored
+meaningfully higher via cosine similarity than an unrelated JD
+(pastry chef) — 0.169 vs. 0.019.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Test strategy: `slow`-marked real-model tests, excluded from the default `pytest` run
+
+Reason: the project's test suite had been ~1.2 sec for 85 tests with
+zero network/model dependencies; a real, unmocked embedding test costs
+roughly 15 sec (importing `sentence_transformers`/`torch`) plus ~6 sec
+(loading model weights into memory) the first time it runs in a
+process. Added `pytest.ini` registering a `slow` marker with
+`addopts = -m "not slow"`, so the default `pytest` invocation everyone
+has been running all project stays fast, and the real-model tests run
+on demand via `pytest -m slow`.
+
+A first attempt at a *fast, mocked* orchestration test file
+(`test_encoder.py`, using `unittest.mock`/`monkeypatch` to fake
+`SentenceTransformer`) was written, then **deleted after measuring
+that it didn't work**: `encoder.py` does `from sentence_transformers
+import SentenceTransformer` at module level, so merely importing
+`src.embeddings.encoder` — required to monkeypatch anything inside
+it — pays the full ~15s import cost regardless of mocking. Confirmed
+by re-running the suite and watching the time stay at ~13-20s despite
+the mocks; the fix wasn't a better mock, it was recognizing the
+premise ("mocking makes this fast") was wrong and consolidating the
+orchestration tests (e.g. "does `get_model()` cache across calls?")
+into the same `slow`-marked, real-model file instead — since the
+import cost is paid regardless, testing the real behavior there is
+strictly more meaningful than a mock would have been anyway.
+
+A separate, real bug also had to be fixed in the process: the first
+version of the `slow`-marked integration test file imported `encode`
+at module level too, which meant pytest paid the full import cost
+during test *collection* even though the tests themselves were
+deselected by the marker — 3 "deselected" tests still cost ~20s.
+Fixed by moving `from src.embeddings.encoder import encode` inside
+each test function body, so the import only executes when a test
+actually runs.
+
+Status: Accepted. Verified: default `pytest` is 95 tests in ~1.6 sec;
+`pytest -m slow` is 4 tests in ~17 sec.
+
+------------------------------------------------------------------------
+
 ### `process_resume()` remains the single orchestration path for `/upload-resume`
 
 Reason: an earlier proposal (from ChatGPT's initial review) suggested
@@ -998,7 +1084,7 @@ Status: Accepted.
 | Extraction | Contact Info + Name + Education/Experience entries (structural fields only — see Section 11; skills not extracted) |
 | Pipeline Orchestration | Wired live: `POST /upload-resume` calls `process_resume()` end-to-end |
 | Job Description Ingestion | Live — `POST /upload-job` parses a JD PDF (reusing `extract_text`/`clean_text`, not resume section detection/extraction), persists `Job`/`Upload`, manually verified. Title is user-provided, not extracted (no real JD data exists to validate a heuristic against). |
-| Embeddings | Scaffold — `encode(text)` exists, never called with real pipeline output |
+| Embeddings | Hardened and verified against real pipeline output (`encode()` produces meaningful semantic similarity scores on the real sample resume vs. relevant/unrelated JDs), but not called from ingestion or `/rank` yet — no consumer exists. `prepare_resume_embedding_text()` (resume-specific text prep) lives in `src/pipeline.py`, not in `src/embeddings/`, which stays domain-agnostic. |
 | Similarity | Scaffold — `cosine_similarity()` exists, never called |
 | Scorer | Initial — `compute_score()` exists with hardcoded weights, never fed real similarity/extraction data |
 | Feedback | Scaffold — `generate_feedback()` exists, never called |
@@ -1036,9 +1122,15 @@ Current
 
 ✅ Job Description ingestion tests passing (`parse_job_description()`, `/upload-job` persistence, required-title validation, 422 on unparseable PDF)
 
+✅ `cosine_similarity()` tests passing (previously zero coverage despite being fully implemented)
+
+✅ `prepare_resume_embedding_text()` tests passing (HEADER exclusion, section ordering, empty-input handling)
+
+✅ Real-model embedding tests passing, run separately from the default suite (see Section 11's test-strategy decision): vector shape/dtype, similar-vs-unrelated semantic scoring, caching behavior
+
 Current Result
 
-85 / 85 tests passing
+99 tests total — 95 / 95 passing by default (`pytest`, ~1.6 sec); 4 / 4 additional real-model tests passing on demand (`pytest -m slow`, ~17 sec)
 
 ------------------------------------------------------------------------
 
@@ -1093,6 +1185,21 @@ Completed
     untouched description text — the JD's own "Education"/"Experience"
     subheadings stored as plain text, not reinterpreted as resume
     sections.
+-   Embeddings manually verified against real data end-to-end: ran
+    `process_resume()` on the real sample resume, fed the result
+    through `prepare_resume_embedding_text()` (confirmed the email
+    address is absent from the text passed to the encoder), then
+    `encode()` + `cosine_similarity()` against two JD strings — one
+    matching the resume's actual domain (electronics/embedded
+    systems), one unrelated (pastry chef). Relevant JD scored 0.169,
+    unrelated scored 0.019 — the relative ordering is meaningful even
+    though absolute cosine-similarity values for MiniLM embeddings are
+    not calibrated to a 0-1 "relevance" scale.
+-   Test-suite speed verified directly, not assumed: default `pytest`
+    confirmed at ~1.6 sec (95 tests), `pytest -m slow` confirmed at
+    ~17 sec (4 tests) — including catching and fixing a real bug where
+    an early version cost ~20 sec by default despite marker-based
+    deselection (see Section 11).
 
 ------------------------------------------------------------------------
 
@@ -1370,6 +1477,28 @@ Lessons
 
 ------------------------------------------------------------------------
 
+## Embeddings Module (Session 14, Claude, cross-reviewed with ChatGPT)
+
+### Achievements
+
+- Measured the existing scaffold before proposing any design, rather than trusting the project's own documented "Embedding <1 sec" goal: found import (~15.6s) + first model load (~6.1s) vs. warm inference (~0.02s) are three completely different numbers that had been collapsed into one misleading claim.
+- Cross-reviewed the design with ChatGPT: agreed on deferring persistence/wiring to a future `/rank` milestone; ChatGPT reframed my "Option A vs B" framing for resume embedding text into the more useful question of what the Embeddings module's *contract* should be, correctly citing Section 7's own pre-existing "Embeddings — Generate vectors only" line I hadn't checked against.
+- Implemented `prepare_resume_embedding_text(SectionedResume) -> str` in `src/pipeline.py`, keeping `src/embeddings/` itself domain-agnostic; hardened `encoder.py` with a return-type annotation and a docstring recording the measured timings.
+- Attempted a fast, mocked orchestration test file first, then **measured that it didn't achieve its goal and deleted it**: `encoder.py` imports `sentence_transformers` at module level, so importing the module to monkeypatch it pays the full ~15s cost regardless of mocking. Caught by re-running the suite and watching the time not improve, not by reasoning about it in the abstract.
+- Also caught and fixed a second real bug in the same area: the `slow`-marked integration test file initially imported `encode` at module level, which meant pytest paid the import cost during test *collection* even for deselected tests — "3 deselected" tests still cost ~20 seconds. Fixed by deferring the import inside each test function.
+- Added `pytest.ini` (`slow` marker, `addopts = -m "not slow"`) so the default `pytest` invocation — used ~15 times already this session — stays fast.
+- Added tests for `cosine_similarity()` (previously zero coverage despite being a fully correct, already-implemented function) and `prepare_resume_embedding_text()` to the fast suite; consolidated all real-model tests (vector shape, similar-vs-unrelated semantic scoring, caching behavior) into one `slow`-marked file.
+- Manually verified against real data twice: `prepare_resume_embedding_text()` confirmed to exclude the real sample resume's email; `encode()` + `cosine_similarity()` confirmed a JD matching the resume's actual domain scores meaningfully higher (0.169) than an unrelated one (0.019).
+- Recorded, but did not implement, four future considerations ChatGPT raised: model version pinning, never hardcoding embedding dimensionality, keeping device (CPU/GPU) handling internal to the embedding layer, and not designing today's single-string `encode()` API in a way that would make future batch encoding a breaking change (see Section 18).
+
+### Lessons
+
+- A performance claim already sitting in the project's own documentation ("Embedding <1 sec") turned out to be wrong as stated the moment it was actually measured — the same "verify, don't trust the write-up" discipline from Session 4, just applied to this project's own prior documentation instead of someone else's.
+- A test-isolation strategy can look correct in design and still fail in practice for a reason invisible until measured (mocking a module doesn't avoid that module's own top-level imports) — this is now the second time this session a design had to be corrected after implementation surfaced a wrong premise (the first being the blank-line title-lookback bug in Session 12), reinforcing that "cross-reviewed and approved" is not the same as "verified against running code."
+- Deselected tests are not free — pytest still imports a test module during collection regardless of whether marker-based filtering will skip its tests, a subtlety that would have silently reintroduced the exact regression the `slow` marker was meant to prevent.
+
+------------------------------------------------------------------------
+
 # 16. Current TODO
 
 ## High Priority
@@ -1397,16 +1526,15 @@ Lessons
 
 Goal
 
-One clear recommendation, still worth confirming with the user: begin the **Embeddings module** — the next unbuilt architecture stage (Section 4), and the natural next step now that both Vision-required inputs (resumes via `/upload-resume`, job descriptions via `/upload-job`) are ingested and persisted. The alternative — wiring `/rank`/`/results`/`/download` — isn't really independent of this: `/rank` has nothing to call without Embeddings/Similarity/Scorer existing first, so it's not a true fork the way past sessions' choices were.
+One clear recommendation: begin **Similarity + `/rank` wiring** — the natural next step now that Embeddings is built and verified. This is where the decisions explicitly deferred this session belong together: compute-on-demand vs. cache, whether to persist vectors (new `Resume`/`Job` columns or a new table), cache invalidation if the model ever changes, and batch encoding for scoring many candidates against one job at once.
 
-Tasks (if Embeddings)
+Tasks (if Similarity/`/rank`)
 
-- Design what gets embedded: resume raw/normalized text vs. section-level text vs. something entry-aware (education/experience entries exist now, contact info doesn't need embedding) — this is a real design decision, not obviously "embed everything."
-- Design what a JD's embedding target is: `Job.description` is the only text available (no JD section structure exists, by deliberate design — see Section 11).
-- Decide on a sentence-transformer model (already a dependency: `sentence-transformers`/`torch`) and confirm the "Embedding <1 sec" performance goal (Section 19) is realistic before committing.
-- Add comprehensive unit tests; verify against real data (the sample resume, and a generated JD, same discipline as every prior milestone this session).
-
-Note: the older "do not begin embeddings until resume preprocessing is fully complete" gate (from before Job Description ingestion existed) is arguably satisfied now — contact/name/education/experience extraction and JD ingestion are all done. Skills extraction is still unimplemented, but nothing about semantic embedding requires it (skill-matching is a separate scoring signal, not a prerequisite for embedding text). Confirm this reading with the user before proceeding, rather than silently reinterpreting an old constraint.
+- Design the embedding target for a Job Description — `Job.description` is the only text available (no JD section structure exists, by deliberate design — see Section 11); this side has no fork the way the resume side did.
+- Decide storage: persist embeddings (new column/table) vs. compute on every `/rank` call. This is now the central open question — deferred, not forgotten.
+- Decide how `/rank` maps to `ScoreComponents.semantic` (`src/scorer/weighted_scorer.py` already expects a single float per resume-job pair) — `cosine_similarity()` is ready to produce that.
+- Consider batch encoding (`encode(list[str])`) for ranking many candidates against one job — the underlying `SentenceTransformer.encode()` already supports it; today's `encode(text: str)` signature was deliberately left forward-compatible with this (see Section 18).
+- Add comprehensive unit tests; verify against real data (the sample resume, and a generated JD), same discipline as every prior milestone this session. Remember the test-speed lesson from this session: keep real-model tests `slow`-marked, with imports deferred inside test functions, not at module level.
 ------------------------------------------------------------------------
 
 # 18. Known Technical Debt
@@ -1486,8 +1614,31 @@ Note: the older "do not begin embeddings until resume preprocessing is fully com
     happens to look like an email/phone — `None`). No real resume
     seen so far exhibits this; documented as an accepted gap, not
     fixed with an untuned heuristic (e.g. a word-count cap).
--   The other 4 routes (`/upload-job`, `/rank`, `/results`, `/download`)
-    are still `raise NotImplementedError` stubs.
+-   The remaining 3 routes (`/rank`, `/results`, `/download`) are still
+    `raise NotImplementedError` stubs.
+-   Embeddings has no persistence and no route wiring — `encode()` is
+    hardened and verified but never called from ingestion or any
+    route. Accepted (Section 11); deferred to the `/rank` milestone,
+    where storage/caching decisions belong together (see Section 17).
+-   Embedding model version is unpinned beyond the string
+    `"all-MiniLM-L6-v2"` — if that identifier's resolved weights ever
+    change upstream, embeddings could shift subtly with no local
+    signal that it happened. Not solved now (per ChatGPT cross-review);
+    revisit if reproducibility across environments/time becomes a
+    real requirement.
+-   Embedding dimensionality is deliberately never hardcoded anywhere
+    in the codebase (tests assert `shape[0] > 0`, not `== 384`) so a
+    future model swap doesn't require hunting down a magic number.
+-   Device (CPU/GPU) handling is entirely implicit — `SentenceTransformer`
+    auto-selects today. If GPU support is ever added, that logic
+    should stay internal to `src/embeddings/encoder.py`; nothing
+    outside that module should need to know or care which device ran
+    the model.
+-   `encode(text: str)` only exercises single-string input today; the
+    underlying `SentenceTransformer.encode()` already accepts
+    `list[str]` and returns a 2D array for batch input, so this isn't
+    blocked, just not implemented. Revisit when `/rank` needs to score
+    many candidates against one job without repeated model invocation.
 -   No request-size validation on `/upload-resume` — `MAX_UPLOAD_SIZE_MB`
     is defined in config but not enforced. No cleanup/retention policy
     on `UPLOAD_DIR` — every uploaded file is kept indefinitely.
@@ -1522,9 +1673,23 @@ Note: the older "do not begin embeddings until resume preprocessing is fully com
 PDF Parsing \<2 sec (met: ~7.9ms avg on a sample resume, see
 benchmark in Section 3)
 
-Embedding \<1 sec
+Embedding — corrected Session 14; the original "<1 sec" collapsed
+three fundamentally different events into one misleading number.
+Measured, not assumed:
 
-Similarity \<200 ms
+| Event | Time | Frequency |
+|---|---|---|
+| First-ever model download (network) | ~37 sec | once per environment, ever |
+| Cold process startup (import `sentence_transformers`/`torch` + load cached weights) | ~22 sec (~15.6s import + ~6.1s load) | once per process lifetime |
+| Warm inference (model already resident via `lru_cache`) | ~20 ms | every call after the first, within that process |
+
+The "<1 sec" goal is met, but only for warm inference — which is what
+actually matters in a long-lived server process (the cold cost is
+paid once at/near startup, not per request). Not yet meaningful for
+API latency since nothing calls `encode()` from a route yet.
+
+Similarity \<200 ms (met: pure numpy, effectively instant — no
+dedicated benchmark run, cost is negligible relative to embedding)
 
 API \<1 sec
 
@@ -1574,6 +1739,12 @@ You should be able to explain:
 -   Why a job title is a required user input rather than extracted, in contrast to a resume's name
 -   Why no `ParsedJobDescription` domain model exists, and what would justify introducing one
 -   Why `clean_text()` still lives inside `preprocessor.py` despite having two consumers now, and what would justify moving it
+-   Why Embeddings persistence and route wiring were deferred to a future `/rank` milestone instead of built alongside the encoder
+-   Why `prepare_resume_embedding_text()` lives in `src/pipeline.py` rather than `src/embeddings/`, and how that decision traces back to a module responsibility ("Embeddings — Generate vectors only") written before this milestone even started
+-   Why the HEADER section is excluded from the text fed to the embedding model
+-   Why a "fast, mocked" test strategy for the encoder was abandoned after implementation, and what that reveals about mocking a module with heavy top-level imports
+-   Why marker-based test deselection alone didn't prevent a ~20 second regression, and what the actual fix was
+-   Why embedding dimensionality is never hardcoded anywhere in the codebase
 
 ------------------------------------------------------------------------
 
@@ -1703,3 +1874,13 @@ Completed (Session 13)
 - Added 9 new tests, including the literal collision-case content as a test case — 85/85 total passing.
 - Manually verified against a live server with a generated JD PDF containing the exact collision case: confirmed the DB stored "Education"/"Experience" as plain text, not resume sections.
 - PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points).
+
+Completed (Session 14)
+
+- Measured the existing Embeddings scaffold before designing — found the project's own "Embedding <1 sec" performance goal was wrong as stated (cold ~22s one-time, warm ~20ms).
+- Cross-reviewed with ChatGPT: agreed to defer persistence/route wiring to a future `/rank` milestone; adopted ChatGPT's reframing of resume-embedding-text as a module-boundary question, keeping `src/embeddings/` domain-agnostic.
+- Implemented `prepare_resume_embedding_text()` in `src/pipeline.py`, hardened `encoder.py` (return type, docstring with measured timings).
+- Attempted a mocked fast-test strategy for the encoder, measured that it didn't work (module-level `sentence_transformers` import defeats mocking), deleted it, and consolidated real-model tests into one `slow`-marked file instead — also caught and fixed a second bug where deselected slow tests still cost ~20s due to a module-level import during collection.
+- Added `pytest.ini` (`slow` marker, fast by default); added missing `cosine_similarity()` coverage; added `prepare_resume_embedding_text()` coverage.
+- Manually verified against real data: real sample resume's email confirmed absent from embedding text; a domain-matching JD scored meaningfully higher (0.169) than an unrelated one (0.019) via real `encode()` + `cosine_similarity()`.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points, corrected performance table).

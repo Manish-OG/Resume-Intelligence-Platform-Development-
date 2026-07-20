@@ -74,3 +74,32 @@ def process_resume(pdf_path: Path | str) -> PipelineResult:
         education=education,
         experience=experience,
     )
+
+
+def prepare_resume_embedding_text(sections: SectionedResume) -> str:
+    """
+    Build the text representation of a resume that should be embedded
+    for semantic matching against a Job Description.
+
+    Deliberately excludes the HEADER section (name/email/phone/URLs) —
+    contact information carries no semantic signal for matching
+    against a JD's skills/responsibilities, and including it would
+    dilute a short document's embedding with irrelevant proper nouns
+    and numbers. All other sections are joined in document order.
+
+    Not called from process_resume() — embeddings are computed on
+    demand by a future consumer (e.g. /rank), not eagerly at ingestion
+    time, since no storage/consumer exists yet (see PROJECT_BIBLE.md
+    Section 11). Kept in src/pipeline.py rather than src/embeddings/
+    so the Embeddings module itself stays a domain-agnostic
+    text-to-vector encoder, per Section 7's "Embeddings - Generate
+    vectors only."
+
+    Never raises. Returns "" if the resume has no non-HEADER sections
+    (e.g. a near-empty resume) — encode("") is a valid, if unhelpful,
+    embedding, same as every other extractor's honest-empty-result
+    convention in this codebase.
+    """
+
+    non_header = (s for s in sections.sections if s.section_type != SectionType.HEADER)
+    return "\n\n".join(s.content for s in non_header)
