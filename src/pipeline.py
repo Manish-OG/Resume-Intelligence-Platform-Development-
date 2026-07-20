@@ -1,12 +1,25 @@
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
+import numpy as np
+
+from src.embeddings.encoder import encode
 from src.extraction.contact_extractor import extract_contact_info
 from src.extraction.entry_extractor import extract_entries
 from src.extraction.name_extractor import extract_name
-from src.models import CandidateName, ContactInfo, ResumeEntry, SectionedResume, SectionType
+from src.extraction.skills_extractor import extract_skills
+from src.models import (
+    CandidateName,
+    ContactInfo,
+    ResumeEntry,
+    ResumeSkills,
+    SectionedResume,
+    SectionType,
+    StructuredResume,
+)
 from src.parser.pdf_parser import extract_text
-from src.preprocess.preprocessor import preprocess
+from src.preprocess.preprocessor import clean_text, preprocess
 from src.preprocess.section_detector import detect_sections
 
 
@@ -103,3 +116,66 @@ def prepare_resume_embedding_text(sections: SectionedResume) -> str:
 
     non_header = (s for s in sections.sections if s.section_type != SectionType.HEADER)
     return "\n\n".join(s.content for s in non_header)
+
+
+def _reconstruct_sections(raw_text: str, filename: str = "") -> SectionedResume:
+    """
+    Shared re-derivation from a persisted Resume.raw_text back to
+    SectionedResume: clean_text -> detect_sections.
+
+    Factored out so every rank-time consumer (build_resume_embedding,
+    build_resume_skills, and any future one) goes through the exact
+    same reconstruction instead of each re-implementing it — the
+    "pipeline divergence" risk ChatGPT cross-review flagged applies
+    just as much to two *rank-time* helpers diverging from each other
+    as it does to upload-time vs. rank-time diverging.
+
+    filename/page_count are decorative metadata only (detect_sections()
+    reads solely .normalized_text); page_count is not tracked for
+    persisted resumes and defaults to 0 rather than a guessed value.
+    """
+
+    structured = StructuredResume(
+        filename=filename,
+        normalized_text=clean_text(raw_text),
+        page_count=0,
+        processed_at=datetime.utcnow(),
+    )
+    return detect_sections(structured)
+
+
+def build_resume_embedding(raw_text: str, filename: str = "") -> np.ndarray:
+    """
+    The single, shared path from a resume's raw text to its semantic
+    embedding: _reconstruct_sections -> prepare_resume_embedding_text
+    -> encode.
+
+    Exists so /rank (src/ranking.py) and any future caller reconstruct
+    a resume's embedding identically, rather than each re-implementing
+    this sequence — added per ChatGPT cross-review's "pipeline
+    divergence" concern: two independently-maintained paths preparing
+    resume text for embedding would risk silently drifting apart.
+    """
+
+    sectioned = _reconstruct_sections(raw_text, filename)
+    text = prepare_resume_embedding_text(sectioned)
+    return encode(text)
+
+
+def build_resume_skills(raw_text: str, filename: str = "") -> ResumeSkills:
+    """
+    The single, shared path from a resume's raw text to its extracted
+    skills list: _reconstruct_sections -> find SKILLS section ->
+    extract_skills.
+
+    Mirrors build_resume_embedding()'s shape for the same "shared
+    orchestration, not duplicated" reason. Returns
+    ResumeSkills(skills=()) if the resume has no SKILLS section at
+    all — never raises.
+    """
+
+    sectioned = _reconstruct_sections(raw_text, filename)
+    skills_section = next(
+        (s for s in sectioned.sections if s.section_type == SectionType.SKILLS), None
+    )
+    return extract_skills(skills_section) if skills_section else ResumeSkills(skills=())

@@ -1,13 +1,24 @@
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 DEFAULT_MODEL = "all-MiniLM-L6-v2"
 
 
 @lru_cache(maxsize=1)
-def get_model(model_name: str = DEFAULT_MODEL) -> SentenceTransformer:
+def get_model(model_name: str = DEFAULT_MODEL) -> "SentenceTransformer":
+    # Deliberately imported here, not at module top level: src/ranking.py
+    # (via src/pipeline.py) now imports this module at FastAPI startup,
+    # so a top-level `from sentence_transformers import SentenceTransformer`
+    # would make every API test pay the ~15s import cost just from
+    # importing app.backend.main, even tests that never call /rank.
+    # Only an actual call to get_model()/encode() should pay it.
+    from sentence_transformers import SentenceTransformer
+
     return SentenceTransformer(model_name)
 
 
