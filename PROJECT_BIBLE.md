@@ -19,7 +19,7 @@
 - ML Engineer
 - GenAI Engineer
 
-**Current Version:** v0.5.0
+**Current Version:** v0.10.0
 
 **Current Status:** Active Development
 
@@ -27,24 +27,41 @@ Current Milestone:
 Resume Intelligence Engine (In Progress)
 
 Latest Completed Milestone:
-Pipeline Orchestration (parse → preprocess → detect sections → extract contact info)
+Job Description ingestion (`POST /upload-job`) — the Vision's other required input now exists
 
-**Overall Progress:** ~44%
+**Overall Progress:** ~60%
 
-Caveat on that number (added Session 8, read before trusting it): ~44%
-reflects a solid, well-tested *foundation* on the resume-ingestion
-side only. It does **not** mean 44% of the working product described
-in the Vision below exists. As of end of Session 8, there is **no
-path a user can run end-to-end** — see Section 12 (Module Status) and
-Section 18 (Known Technical Debt) for the honest breakdown of what's
-built vs. scaffold vs. not started at all.
+Caveat on that number (updated Session 13, first written Session 8):
+~60% reflects a solid, well-tested foundation on both ingestion sides
+(resume and Job Description), each reachable end-to-end through a
+real, tested, persisting HTTP endpoint. It does **not** mean 60% of
+the working product described in the Vision below exists — nothing
+yet connects a `Job` to its candidates: embeddings, similarity,
+scoring, feedback, `/rank`/`/results`/`/download`, and the actual
+frontend are all still stub/scaffold/nonexistent. See Section 12
+(Module Status) and Section 18 (Known Technical Debt) for the honest
+breakdown.
 
-Git Note (added Session 8): everything from Session 5 onward
-(`StructuredResume` through `src/pipeline.py`) is uncommitted working-
-tree state — `git status` shows only the original scaffold merge as
-committed history. A new session should confirm with the user whether
-to commit before doing further work, since a large amount of
-uncommitted work is currently sitting in the working tree.
+Git Note (updated Session 13, first written Session 8): as of the end
+of Session 13, all of Session 9 through Session 13's work — name
+extraction, `Resume`/`Candidate` persistence, education/experience
+entry extraction, and Job Description ingestion (`src/extraction/name_extractor.py`,
+`src/extraction/entry_extractor.py`, `src/job_pipeline.py`,
+`app/backend/api/schemas.py`, plus changes to `src/pipeline.py`,
+`app/backend/api/routes.py`, `app/backend/main.py`, `src/database/db.py`,
+`src/models/__init__.py`) — is uncommitted working-tree state on
+`main`. The last commit on `main` is `f0d7e05` ("Remove stale
+resume_models.py"), which matches `origin/main`. This is about to be
+committed and pushed as of this writing; if a new session finds this
+note still true, confirm with the user whether to commit before doing
+further work — same situation Session 8 originally flagged, recurring
+because commits happen at the user's discretion, not automatically
+each session.
+
+Also still untracked, unrelated to any of the above and unresolved
+across several sessions: a stray 0-byte file named `extract` at the
+repo root, no git history, cause unknown. Harmless; ask the user
+before deleting it, don't just clean it up silently.
 
 ------------------------------------------------------------------------
 
@@ -278,11 +295,11 @@ pytest
 
 # 7. Module Responsibilities
 
-Parser - Extract raw PDF text - Return ParsedResume - No cleaning
+Parser - Extract raw PDF text - Return ParsedResume - No cleaning (also reused as-is for Job Description PDFs — see Section 11)
 
 Preprocess - Cleaning - Normalization - Section detection
 
-Extraction - Pull structured facts out of detected sections (contact info now; education/experience/skills entries planned)
+Extraction - Pull structured facts out of detected sections (contact info, name, and education/experience entries now; skills entries planned)
 
 Embeddings - Generate vectors only
 
@@ -418,6 +435,50 @@ Contact extraction (`src/extraction/contact_extractor.py`)
 Reason
 
 Deliberately not bundled into a broader `ExtractedResume` aggregate yet — see Section 11's "Extraction fields introduced only as they're implemented" decision. A standalone, narrowly-scoped value object avoids repeating the unused-fields mistake already logged in Session 3.
+
+---
+
+## CandidateName
+
+Purpose
+
+Candidate name extracted from a `SectionedResume`'s HEADER section.
+
+Fields
+
+- name (str | None)
+
+Produces
+
+Name extraction (`src/extraction/name_extractor.py`)
+
+Reason
+
+Kept as its own model rather than added as a third field on `ContactInfo` — a name is identity information, not a contact channel, and folding it into `ContactInfo` would have stretched that model's meaning and risked a future breaking rename. Mirrors the same "each extracted concept gets its own narrow model" precedent `ContactInfo` itself established in Session 7.
+
+---
+
+## ResumeEntry
+
+Purpose
+
+One structural entry within an EDUCATION or EXPERIENCE section, produced by date-anchored segmentation.
+
+Fields
+
+- title (str | None)
+- dates (str | None)
+- details (str)
+
+Produces
+
+Entry extraction (`src/extraction/entry_extractor.py`)
+
+Reason
+
+Deliberately kept to structural fields only (title/dates/details) — not decomposed into semantic fields (degree, GPA, location, company, role). No reliable text-only delimiter exists to split those apart from plain extracted text; attempting it would risk confidently-wrong structured data. See Section 11's design decision for the full reasoning, including the real hand-traced evidence this was tested against.
+
+`title` documents an implementation rule (the nearest non-blank line preceding a recognized date line), not a claim that every resume places the institution/company there — see Section 11.
 
 All domain models are immutable (`frozen=True`) value objects.
 
@@ -612,6 +673,321 @@ non-US phone formats to matter.
 
 ------------------------------------------------------------------------
 
+### DB session: generator-based `get_db()` replaces `get_session()`
+
+Reason: `get_session()` was a plain factory (`return SessionLocal()`)
+with no cleanup and no way to plug into FastAPI's `Depends()`. Replaced
+with the standard FastAPI generator-dependency idiom (`yield` inside a
+`try`/`finally` that closes the session). Zero callers existed for the
+old function, so this was a clean swap, not a breaking change.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `PDFParseError` maps to HTTP 422, not 400
+
+Reason: a corrupt, scanned, or password-protected PDF is a
+syntactically valid multipart upload — the *request* is well-formed;
+the uploaded document's *content* is what's unprocessable. FastAPI
+already uses 422 for its own "well-formed request, semantically bad
+payload" validation errors, so this reuses an existing convention
+rather than introducing a new one (400 was considered and rejected).
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `/upload-resume` persists to the `Upload` table only (Resume/Candidate deferred)
+
+Reason: a literal "persist the full `PipelineResult`" doesn't map onto
+today's schema. `Candidate.name` is `NOT NULL` but no code anywhere
+extracts a name; `Resume.raw_text` is `NOT NULL` but `PipelineResult`
+doesn't carry a flat text field. Inventing a placeholder name (e.g.
+filename or `"Unknown"`) would repeat the unused/fake-field mistake
+already caught and fixed on `ParsedResume` in Session 3. Instead, this
+milestone persists only what the pipeline actually and cleanly
+produces (`Upload.file_name`/`file_path`/`uploaded_at`) and returns
+`sections` + `contact` directly in the JSON response. `Resume`/
+`Candidate`/`Score` population is explicitly deferred to the next
+extraction slice (name extraction), not silently faked.
+
+Cross-reviewed with ChatGPT, which independently reached the same
+conclusion and additionally recommended never writing a *partial*
+`Resume` row — persist `Upload` only, or `Upload` + a fully valid
+`Resume`, never something in between.
+
+Status: Accepted for this milestone; revisit once name extraction exists.
+
+------------------------------------------------------------------------
+
+### `Resume.raw_text` means `ParsedResume.raw_text`, not `StructuredResume.normalized_text`
+
+Reason: this needed pinning down before any code touches it, since the
+two are not equivalent. `ParsedResume.raw_text` is the canonical,
+unmodified parser output; `StructuredResume.normalized_text` is a
+derived artifact. Persisting the canonical form lets normalization
+logic evolve later without needing to touch (or re-derive) stored
+data. Raised and settled during ChatGPT cross-review; not yet acted on
+in code since no route persists `Resume` rows this milestone — recorded
+here so Milestone B (name extraction + `Resume`/`Candidate`
+persistence) doesn't have to re-litigate it.
+
+Status: Accepted; to be applied when `Resume` persistence is implemented.
+
+------------------------------------------------------------------------
+
+### Name extraction: own `CandidateName` model, first-HEADER-line heuristic
+
+Reason: considered adding `name: str | None` directly to `ContactInfo`
+instead (one function call, one pass over HEADER content) but rejected
+it — a name isn't a contact channel, and stretching `ContactInfo`'s
+meaning risks a future breaking rename across `PipelineResult`, tests,
+and the API response. A separate `CandidateName` model + a separate
+`extract_name()` in a new `name_extractor.py` mirrors the exact
+`ContactInfo`/`contact_extractor.py` precedent instead.
+
+Extraction heuristic: the first non-empty line of the HEADER section
+is the name, unless it matches the existing email/phone regexes
+(reused from `contact_extractor.py`), in which case `None` is
+returned rather than misreporting a contact line as a name. No NLP
+dependency, consistent with every other extraction/detection decision
+in this project. Verified against the real sample resume
+(`samples/Manish_ResumeDA01.pdf`) as well as synthetic fixtures.
+
+Accepted, documented gap: a HEADER that opens with something other
+than a name (address, objective statement, photo caption) will
+misextract. No real resume seen so far exhibits this, so no guess-work
+heuristic (e.g. a word-count cap) was added to guard against it —
+consistent with the project's habit of not adding untuned checks for
+unobserved failure modes.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `PipelineResult` gains `raw_text`, excluded from the API response via a new `UploadResumeResponse` schema
+
+Reason: persisting `Resume.raw_text` (= `ParsedResume.raw_text`, per the
+decision above) requires reaching it from the route. Two options were
+weighed: (a) add `raw_text: str` to `PipelineResult`, one parse per
+request; (d) have the route call `extract_text()` a second time,
+keeping `PipelineResult` unchanged. Chose (a) — a second full parse
+per request, even at ~8ms, reads as an oversight to a future reviewer,
+and the real objection to (a) (the full raw resume text leaking into
+the HTTP response) is better solved directly than worked around.
+
+Solved directly by introducing `app/backend/api/schemas.py`'s
+`UploadResumeResponse` — a route-local API schema (not a domain
+model) that selects `sections`/`contact`/`name` (plus the new
+`resume_id`/`candidate_id`) and omits `raw_text`. This is the first
+concrete use of a schema layer, addressing part of the long-standing
+"No API schemas yet" tech debt item — introduced now because a real,
+current need exists (hide a persistence-only field from the response,
+expose real DB-generated IDs), not speculatively.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `Candidate` rows are not deduplicated
+
+Reason: re-uploading the same person's resume creates a new
+`Candidate` row every time; no find-or-create-by-email logic exists.
+Considered and rejected for now: real dedup requires deciding how to
+handle a `None` email (unmatchable), a candidate with two different
+emails across resumes, and false-positive matches — real business
+logic with no concrete requirement driving it yet. Consistent with
+this project's repeated pattern (OCR, `phonenumbers`, generic heading
+detection) of not building speculative logic ahead of an actual need.
+
+Status: Accepted for this milestone; revisit once a concrete
+requirement needs "one candidate, many resumes" semantics.
+
+------------------------------------------------------------------------
+
+### `Resume`/`Candidate` persistence is skipped when name extraction returns `None`
+
+Reason: `Candidate.name` is `NOT NULL`. Rejected: a placeholder name
+(repeats the fake-field anti-pattern caught in Session 3 and reapplied
+several times since). Rejected: failing the request — a missing name
+is a heuristic gap, not a parse failure; sections and contact still
+extracted correctly, so a 4xx/5xx would misrepresent what actually
+went wrong. Chosen: when `CandidateName.name is None`, skip `Resume`/
+`Candidate` creation entirely, persist `Upload` only (identical to the
+"no name" case's existing behavior), and still return 200 with the
+full `sections`/`contact`/`name` — `resume_id`/`candidate_id` are
+`None` in that response.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Education/Experience entry extraction: date-anchored segmentation, structural fields only
+
+Reason: before designing, hand-traced candidate heuristics against the
+real sample resume's actual EDUCATION and EXPERIENCE content (not
+synthetic fixtures) — the same practice Session 6 used for section
+detection. Findings that shaped the design:
+
+- A blank-line-separated-paragraphs heuristic (the obvious first
+  idea) finds zero entry boundaries in the real EDUCATION section —
+  its three entries run with no blank lines between them.
+- A date-line-anchored heuristic correctly recovers all three
+  EDUCATION entries, using `re.fullmatch` (not `.search()`) so a
+  bullet merely *mentioning* a year can't trigger a false boundary.
+- The same real resume's EXPERIENCE section contains **zero**
+  standalone date lines at all — the chosen heuristic must produce an
+  honest single-entry fallback here, not force incorrect structure.
+
+Chosen design: for each date line found (full-line match against a
+month/year/range pattern), the nearest preceding non-blank line
+becomes that entry's `title` — documented explicitly as "the line the
+extractor found," not "the institution/company is always the
+preceding line" (refined after ChatGPT cross-review, which correctly
+flagged the original wording as overclaiming a universal resume
+property rather than describing an implementation rule). Everything
+else in the entry stays in `details` as raw, undecomposed text — no
+attempt to further split degree/GPA/location apart, since no reliable
+delimiter exists for that in plain extracted text (also confirmed
+during cross-review). If no section line fullmatches a date, the
+whole section becomes one entry with `title=None, dates=None` rather
+than guessing.
+
+Known limitation (added per ChatGPT cross-review): the extractor
+assumes one date anchor per logical entry. An entry containing more
+than one standalone date-shaped line (e.g. a sub-timeline within a
+single job) will be over-segmented into multiple entries. Not
+observed in the one real resume available, but a real, plausible
+resume layout — logged here rather than silently risked.
+
+Explicitly out of scope this milestone: DB persistence. No
+`Education`/`Experience` tables exist in the schema; adding them is a
+separate schema-design decision, deferred the same way `ContactInfo`
+and `CandidateName` extraction each preceded their own persistence
+milestone.
+
+Cross-reviewed with ChatGPT to convergence; both reviewers agreed the
+core principle at stake — "never fabricate structure the source text
+does not reliably contain" — mattered more than extracting one
+additional field.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Job Description ingestion: PDF upload, not pasted text
+
+Reason: before designing, this needed actual research (flagged as the
+least-explored TODO item) rather than an assumption. Two independent
+pieces of existing scaffold evidence agree: `app/frontend/streamlit_app.py`
+already has `st.file_uploader("Job description (PDF)", type="pdf")`,
+and the `/upload-job` route stub's signature already took
+`file: UploadFile`. The `Job.description: str` column (no `file_path`)
+initially looked like it might hint at pasted text, but isn't a real
+contradiction — it mirrors exactly how `Resume.raw_text` already
+stores parsed text from an uploaded resume PDF, with the file path
+tracked separately in the already-generic `Upload` table.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### JD ingestion reuses `extract_text()`/`clean_text()`, not `detect_sections()`
+
+Reason: checked by reading the actual code, not assumed. `extract_text()`
+(PDF → raw text) and `clean_text()` (the inner, fully generic text-hygiene
+function inside `preprocessor.py` — line endings, tabs, trailing
+whitespace, blank-line collapsing, boundary trim) have nothing
+resume-specific in them and are safe to reuse directly.
+`detect_sections()` is not: its matching logic
+(`section_detector.py`) does an exact match, after stripping a
+trailing colon, against a curated `ALIASES` table that includes bare
+`"education"` and `"experience"`. A JD's own Requirements block
+commonly uses short subheadings like:
+```
+Requirements
+Education
+Bachelor's degree in Computer Science or related field
+Experience
+3+ years of software development experience
+```
+A line that's literally `"Education"` or `"Experience"` would
+exact-match and get mislabeled as a resume-style section on a
+document that isn't a resume — a concrete, traceable false-positive,
+not a hypothetical one. Verified end-to-end with exactly this content
+(manual live-server test): the JD's "Education"/"Experience"
+subheadings are stored as plain text, untouched, in `Job.description`.
+
+A small orchestration helper, `parse_job_description()`
+(`src/job_pipeline.py`), wraps `extract_text()` + `clean_text()` —
+added after ChatGPT cross-review suggested it, so the route stays a
+thin HTTP-to-domain translator (calling two individual transformation
+functions directly from the route would have blurred that boundary)
+and stays structurally symmetrical with `process_resume()`.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Job title is a required user-provided field, not extracted
+
+Reason: every extraction heuristic accepted so far in this project
+(contact info, name, education/experience entries) was verified
+against a real resume before shipping. No real sample Job Description
+exists anywhere in this repo — unlike every prior extraction
+milestone, there's no data to hand-trace a title-extraction heuristic
+against. Guessing without evidence would repeat the exact mistake this
+project has avoided at every previous decision point. `POST
+/upload-job` requires `title: str` as a form field alongside the file
+upload; FastAPI 422s automatically if it's missing.
+
+Status: Accepted; revisit automatic extraction only once a real corpus
+of JDs exists to validate a heuristic against.
+
+------------------------------------------------------------------------
+
+### No `ParsedJobDescription` domain model introduced
+
+Reason: `extract_text()` + `clean_text()` run inline inside
+`parse_job_description()`, returning a plain `str`, not a new domain
+model. Considered a thin wrapper model (mirroring `ParsedResume`'s
+shape) for naming cleanliness, but rejected for now — there's no
+second consumer of a "parsed JD" concept yet (unlike `ContactInfo`/
+`CandidateName`/`ResumeEntry`, each introduced only once something
+actually produced *and* consumed them). Cross-reviewed with ChatGPT,
+which raised a fair framing question — is this project modeling
+*documents* or *pipelines*? — and, applying the project's own
+established pattern (only introduce a model once multiple consumers
+exist), agreed with not introducing one yet. Recorded here as a
+conscious decision, not an omission.
+
+Status: Accepted for this milestone; revisit if a second JD-processing
+stage (e.g. requirement/skill extraction) is added and needs a stable
+input contract.
+
+------------------------------------------------------------------------
+
+### `process_resume()` remains the single orchestration path for `/upload-resume`
+
+Reason: an earlier proposal (from ChatGPT's initial review) suggested
+inlining `extract_text` → `preprocess` → `detect_sections` →
+`extract_contact_info` directly in the route instead of calling
+`process_resume()`, specifically to avoid expanding `PipelineResult`
+with fields only the route needs. Rejected after further review
+(ChatGPT reversed its own position on this point): duplicating the
+four-stage chain in the route would create two independently
+maintained orchestration paths — one exercised by `process_resume()`'s
+existing unit tests, one wired to the actual API — that would need to
+be kept in perfect sync by hand. The route calls `process_resume()`
+unchanged; `PipelineResult` was not expanded, since this milestone's
+scope (`Upload`-only persistence) doesn't actually need anything
+`PipelineResult` doesn't already provide.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
 # 12. Module Status
 
 | Module | Status |
@@ -619,19 +995,19 @@ non-US phone formats to matter.
 | Parser | Production (resumes only — see Job Description row) |
 | Domain Models | Production |
 | Preprocessing | Foundation Complete + Section Detection |
-| Extraction | Contact Info Only (education/experience/skills not extracted) |
-| Pipeline Orchestration | Function exists (`src/pipeline.py`), not called from API |
-| Job Description Ingestion | **Not started.** No code anywhere parses/handles a Job Description — every module built so far only processes resume PDFs. Required by the Vision (Section 2) but untouched. |
+| Extraction | Contact Info + Name + Education/Experience entries (structural fields only — see Section 11; skills not extracted) |
+| Pipeline Orchestration | Wired live: `POST /upload-resume` calls `process_resume()` end-to-end |
+| Job Description Ingestion | Live — `POST /upload-job` parses a JD PDF (reusing `extract_text`/`clean_text`, not resume section detection/extraction), persists `Job`/`Upload`, manually verified. Title is user-provided, not extracted (no real JD data exists to validate a heuristic against). |
 | Embeddings | Scaffold — `encode(text)` exists, never called with real pipeline output |
 | Similarity | Scaffold — `cosine_similarity()` exists, never called |
 | Scorer | Initial — `compute_score()` exists with hardcoded weights, never fed real similarity/extraction data |
 | Feedback | Scaffold — `generate_feedback()` exists, never called |
-| Database | Initial — tables exist, nothing writes to them (e.g. `Candidate.email` has been unpopulated since the original scaffold) |
-| Backend | Scaffolded, not functional — all 5 routes in `app/backend/api/routes.py` are `raise NotImplementedError` stubs; only `GET /health` actually works |
+| Database | `Upload`, `Candidate`, `Resume` written by `/upload-resume`; `Upload`, `Job` written by `/upload-job` (both verified against real data); `Score` and `Feedback` remain entirely unpopulated — nothing computes a score or feedback yet |
+| Backend | Partially functional — `POST /upload-resume` and `POST /upload-job` are both live, tested, and persist real rows; `/rank`, `/results`, `/download` are still `raise NotImplementedError` stubs |
 | Frontend | Scaffold — Streamlit UI renders upload widgets and a "Rank" button, but the handler just shows `"Ranking pipeline not implemented yet"`; no `src/` imports, no API calls |
 | Export | **Not started.** No module exists despite being the final step in the Section 4 architecture diagram. |
 
-**Honest summary**: resume ingestion (parse → preprocess → detect sections → extract contact info) is solid and tested. Everything after that — richer resume extraction, Job Description handling, embeddings, similarity, scoring, feedback, persistence, the actual API, the actual frontend, and export — is either a disconnected stub or doesn't exist yet. No end-to-end user flow is currently possible.
+**Honest summary**: resume ingestion (parse → preprocess → detect sections → extract contact info + name + education/experience entries) and Job Description ingestion (parse → clean → persist) are both solid, tested, and reachable end-to-end through real HTTP routes (`POST /upload-resume`, `POST /upload-job`), both durably persisting real rows. Both of the Vision's required inputs now exist. Everything after that — embeddings, similarity, scoring, feedback, the remaining 3 routes, the actual frontend, and export — is either a disconnected stub or doesn't exist yet. Two end-to-end user flows (upload a resume; upload a JD) are currently possible; nothing connects them yet — no ranking, no scoring, no export.
 ------------------------------------------------------------------------
 
 # 13. Testing Status
@@ -650,9 +1026,19 @@ Current
 
 ✅ Pipeline orchestration tests passing (real generated PDF, end-to-end)
 
+✅ `/upload-resume` API tests passing (project's first `TestClient` tests: success path, `Upload` row persistence, 422 on `PDFParseError`)
+
+✅ Name extractor tests passing
+
+✅ `/upload-resume` persistence tests passing (`Candidate`/`Resume` creation, skip-on-no-name path, `raw_text` not leaked into the response)
+
+✅ Entry extractor tests passing (including the real hand-traced EDUCATION/EXPERIENCE layouts as test cases, not just synthetic ones)
+
+✅ Job Description ingestion tests passing (`parse_job_description()`, `/upload-job` persistence, required-title validation, 422 on unparseable PDF)
+
 Current Result
 
-51 / 51 tests passing
+85 / 85 tests passing
 
 ------------------------------------------------------------------------
 
@@ -672,6 +1058,41 @@ Completed
 -   Logging verified in two modes: direct import (custom format
     applies) and live `uvicorn` run (app-level logs formatted;
     uvicorn's own server logs are not, by design)
+-   `POST /upload-resume` manually verified against a live `uvicorn`
+    server (not just `TestClient`) using the real
+    `samples/Manish_ResumeDA01.pdf`: 200 response with correct
+    sections/contact JSON, `Upload` row correctly persisted to the
+    real SQLite DB, OpenAPI schema correctly documents both 200 and
+    422 responses. Test artifacts (`data/app.db`, `data/uploads/`)
+    cleaned up afterward — both are gitignored, not committed.
+-   Name extraction manually verified against the real sample resume
+    (`samples/Manish_ResumeDA01.pdf`) via `process_resume()`: correctly
+    extracted "Manish Kumar Gupta", not just the synthetic "Jane Doe"
+    test fixture.
+-   `Resume`/`Candidate` persistence manually verified against a live
+    `uvicorn` server with the real sample resume: response correctly
+    returned `resume_id`/`candidate_id`, `raw_text` confirmed absent
+    from the response body (`grep`-checked, not just asserted in a
+    test), and the real SQLite DB correctly held one `Candidate` row
+    (name + email) and one `Resume` row (linked by `candidate_id`,
+    correct filename, 3511 chars of raw text).
+-   Entry extraction manually verified against the real sample resume
+    via `process_resume()` directly (not just the API): correctly
+    recovered all 3 EDUCATION entries with correct title/dates/details
+    split, and correctly produced the single honest fallback entry for
+    EXPERIENCE (no dates present in that section on this resume).
+    Re-verified via a live `uvicorn` server: `education`/`experience`
+    correctly present in the JSON response, `raw_text` still absent.
+-   Job Description ingestion manually verified against a live
+    `uvicorn` server using a generated JD PDF containing the exact
+    Education/Experience collision case identified during design
+    review (a Requirements block with "Education" and "Experience" as
+    short subheadings). Confirmed: 200 response with correct
+    `job_id`/`title`/`created_at`, `description` absent from the
+    response (`grep`-checked), and the real SQLite DB held the full,
+    untouched description text — the JD's own "Education"/"Experience"
+    subheadings stored as plain text, not reinterpreted as resume
+    sections.
 
 ------------------------------------------------------------------------
 
@@ -848,19 +1269,122 @@ Lessons
 
 ------------------------------------------------------------------------
 
+## API Wiring (Session 9, Claude, cross-reviewed with ChatGPT)
+
+### Achievements
+
+- Committed and pushed all of Sessions 5–8's previously-uncommitted work (`feature/pipeline-orchestration`, PR #2, merged to `main`) before starting new work, closing out the Session 8 Git Note.
+- Found and fixed a self-inflicted bug during that commit: a `git add <specific paths>` command omitted `src/models/resume_models.py`'s deletion, so the file's removal never got staged — it rode through the commit and the merge as a "tracked but physically absent" ghost file on `main`. Caught by checking `git status` after the merge rather than assuming it was clean; fixed with a follow-up commit (`f0d7e05`).
+- Drafted the `/upload-resume` design (DB session dependency, file handling, HTTP error mapping, persistence scope) and cross-reviewed it with ChatGPT before writing code. ChatGPT's review surfaced a real design tension — whether to expand `PipelineResult` to carry `raw_text`, or duplicate the pipeline chain inline in the route to avoid touching `PipelineResult` — and, on further exchange, reversed its own initial suggestion once it recognized duplicating the chain would create two orchestration paths to keep in sync by hand. Both reviewers converged: `process_resume()` stays the single orchestration path, `PipelineResult` stays unexpanded, and the tension dissolved once we noticed this milestone's actual scope (`Upload`-table-only persistence) never needed `raw_text` in the first place.
+- Replaced `get_session()` (plain factory, zero callers, no cleanup) with `get_db()`, a generator-based FastAPI `Depends` dependency.
+- Wired `init_db()` into `app/backend/main.py` startup — it existed since the original scaffold but was never actually called anywhere, so no table (including the new `uploads` writes) would have existed at runtime without this.
+- Implemented `POST /upload-resume`: saves the upload to `UPLOAD_DIR` under a collision-safe (`uuid4`-prefixed) filename, calls `process_resume()` unchanged, maps `PDFParseError` → HTTP 422, persists an `Upload` row only, returns `PipelineResult` (`sections` + `contact`) as the response body — FastAPI/Pydantic serialized the nested frozen dataclasses and the `SectionType` string Enum correctly with no extra schema layer needed.
+- Added the project's first API test infrastructure (`tests/conftest.py`): an isolated in-memory SQLite test DB via `dependency_overrides`, and `UPLOAD_DIR` redirected to `pytest`'s `tmp_path` via `monkeypatch` so tests never touch the real `data/` directory.
+- Added 3 API tests (54/54 total passing): success path (sections + contact in the JSON response), `Upload` row persistence, and 422 on an unparseable PDF.
+- Manually verified against a live `uvicorn` server (not just `TestClient`) using the real `samples/Manish_ResumeDA01.pdf`: correct 200 response, correct `Upload` row in the real SQLite DB, and a correct OpenAPI schema (both 200 and 422 documented) via `/docs`. Cleaned up the resulting `data/app.db`/`data/uploads/` test artifacts afterward (both gitignored).
+
+### Lessons
+
+- `git add <specific file paths>` does not implicitly stage deletions of paths you didn't list — a deletion needs to be named explicitly (or use `git add -A`/`git rm`). Assuming "the deletion is captured automatically since the file is already gone from disk" was wrong and shipped a ghost tracked-but-missing file all the way to `main` before being caught.
+- A second reviewer reversing its own earlier suggestion after more context (ChatGPT walking back the "inline the chain in the route" idea) is a sign the cross-review process is working as intended — the same pattern already seen in Session 6, just with the reviewer catching its own gap this time instead of an outside one.
+- A design tension that looks like it needs a hard trade-off (expand `PipelineResult` vs. duplicate the orchestration chain) can sometimes dissolve entirely once you check the *actual* current-milestone scope — neither option was needed because this milestone doesn't persist `Resume` rows at all yet.
+- `cmd.exe` and PowerShell are not interchangeable for multi-line git commands — a PowerShell here-string (`@'...'@`) fed to `cmd.exe` executes each line as a separate (failing) command rather than erroring cleanly; worth confirming which shell is actually in front of the user before handing over syntax.
+
+## Name Extraction (Session 10, Claude)
+
+### Achievements
+
+- Designed the approach before coding (Step 2 review): weighed adding `name` directly to `ContactInfo` (one function, one pass over HEADER) against a standalone `CandidateName` model + `name_extractor.py` (mirrors the `ContactInfo`/`contact_extractor.py` precedent exactly). Chose the standalone model — a name isn't a contact channel, and bundling it in would have risked a future breaking rename across `PipelineResult`, tests, and the API response.
+- Added `CandidateName` domain model (`src/models/candidate_name.py`) and `extract_name(SectionedResume) -> CandidateName` (`src/extraction/name_extractor.py`), reusing `contact_extractor.py`'s existing `EMAIL_PATTERN`/`PHONE_PATTERN` for a defensive check (don't misreport a contact line as a name if HEADER's first line happens to be an email/phone rather than a name).
+- Heuristic: first non-empty line of the HEADER section is the name. No NLP dependency — consistent with every other extraction/detection decision in this project. Documented, accepted gap: a HEADER opening with something other than a name (address, objective line) will misextract; not guarded against since no real resume seen so far exhibits it.
+- Wired `name: CandidateName` into `PipelineResult` and `process_resume()` — the same precedent as when `contact: ContactInfo` joined the bundle in Session 8, not a "convenience expansion" of the kind Section 11 argues against elsewhere.
+- Added 7 unit tests for the extractor (first-line success, no HEADER, empty HEADER, email-first-line, phone-first-line, leading-blank-lines, immutability) plus one new assertion each in `test_pipeline.py` and `test_upload_resume_route.py` — 62/62 total passing.
+- Manually verified against the real sample resume (not just synthetic "Jane Doe" fixtures) — correctly extracted "Manish Kumar Gupta".
+
+### Lessons
+
+- The "own narrow model per extracted concept" precedent from Session 7 held up under a second, different kind of test: this time the alternative (bundling into an existing model) wasn't a placeholder-fields problem like the original `ExtractedResume` rejection, but a semantic-purity one — the precedent still gave the right answer for a different reason, which is a decent sign it's a durable principle rather than a one-off fix for one bug.
+- Reusing `contact_extractor.py`'s existing regexes for the defensive email/phone check avoided duplicating pattern definitions — worth doing whenever two extractors read the same section for related-but-distinct facts.
+
+------------------------------------------------------------------------
+
+## Resume/Candidate Persistence (Session 11, Claude)
+
+### Achievements
+
+- Surfaced four real design forks before writing code (Step 2 review): (1) how to source `Resume.raw_text` given `PipelineResult` didn't carry it, (2) whether to deduplicate `Candidate` rows on re-upload, (3) what to do when name extraction returns `None` but `Candidate.name` is `NOT NULL`, (4) whether the response should keep returning bare `PipelineResult` now that persistence produces real DB-generated IDs.
+- Added `raw_text: str` to `PipelineResult` (sourced from `ParsedResume.raw_text`) rather than having the route parse the PDF a second time — one parse per request, at the cost of the field needing to be explicitly excluded from the API response.
+- Introduced `app/backend/api/schemas.py` — the project's first route-local API schema (`UploadResumeResponse`), holding `resume_id`/`candidate_id`/`sections`/`contact`/`name` and deliberately omitting `raw_text`. First concrete step on the long-standing "No API schemas yet" tech debt item, introduced because a real need existed (hide a persistence-only field, expose real IDs) rather than speculatively.
+- Wired `/upload-resume`: on a name present, creates `Candidate` + `Resume` (flushed to get real IDs before commit), always creates `Upload`; on `CandidateName.name is None`, skips `Candidate`/`Resume` entirely and persists `Upload` only, still returning 200.
+- Decided against `Candidate` dedup this milestone — always insert a new row, consistent with the project's repeated "don't build speculative logic ahead of a real need" pattern (same reasoning as OCR, `phonenumbers`, generic heading detection).
+- Added/updated tests for all four decisions (raw_text present on `PipelineResult`, `raw_text` absent from the API response, `Candidate`/`Resume` correctly persisted and linked, skip-path leaves `Candidate`/`Resume` empty but still persists `Upload`) — 66/66 total passing.
+- Manually verified against a live server with the real sample resume: correct `resume_id`/`candidate_id` in the response, `raw_text` confirmed absent via `grep` (not just a test assertion), and correct `Candidate`/`Resume` rows in the real SQLite DB.
+
+### Lessons
+
+- A design fork that looks purely technical (where does `raw_text` come from?) turned out to have a real product-facing consequence (it would leak into the HTTP response) — worth tracing a decision's downstream effects before picking the "simpler" option.
+- Introducing a schema/abstraction layer is fine the moment a concrete need exists for it (hiding one field, exposing real IDs) — the earlier "No API schemas yet" gap wasn't a mistake to fix reactively, it just hadn't hit a real need until persistence produced actual database IDs to expose.
+
+------------------------------------------------------------------------
+
+## Education/Experience Entry Extraction (Session 12, Claude, cross-reviewed with ChatGPT)
+
+### Achievements
+
+- Hand-traced two candidate segmentation heuristics against the real sample resume's actual EDUCATION/EXPERIENCE content before proposing a design — found blank-line segmentation fails completely (no blank lines between real entries) and that the real EXPERIENCE section has zero date lines at all, a genuine stress case for any date-anchored approach.
+- Designed date-anchored segmentation (`re.fullmatch` against a month/year/range pattern, not `.search()`, to avoid a bullet mentioning a year creating a false boundary) with an honest zero-date fallback (whole section becomes one entry, `title=None, dates=None`) rather than guessing.
+- Deliberately scoped `ResumeEntry` to structural fields only (`title`, `dates`, `details`) — explicitly narrower than the original TODO wording ("dates, companies, degrees" as three fields) — since no reliable text-only delimiter exists to split degree/GPA/location apart, confirmed by hand-tracing real entry content.
+- Cross-reviewed the full design with ChatGPT before implementing (pasting the real hand-traced section content directly into the review, not just a description of it). ChatGPT approved the core approach and requested two refinements: describe "title = line before date" as an implementation rule rather than a claim about resumes in general, and document a known limitation (one date anchor assumed per logical entry — a sub-timeline within one job would over-segment). Both incorporated into the model/function docstrings and this document.
+- Implemented `ResumeEntry` (`src/models/resume_entry.py`) and `extract_entries()` (`src/extraction/entry_extractor.py`), including a blank-line-aware title lookback discovered while implementing (a title-search that stopped exactly one line back would have failed on a blank-line-separated layout like `"Google\n\nJan 2020 – Present"`) — caught and fixed before shipping, not left as a latent gap.
+- Wired `education`/`experience` fields into `PipelineResult` and `UploadResumeResponse`; explicitly deferred DB persistence (no `Education`/`Experience` tables exist), consistent with how contact/name extraction each preceded their own persistence milestone.
+- Added 8 new extractor unit tests (including the real hand-traced EDUCATION/EXPERIENCE content as literal test cases, not just synthetic ones) plus new assertions in `test_pipeline.py` and `test_upload_resume_route.py` — 76/76 total passing.
+- Manually verified against the real sample resume twice: directly via `process_resume()`, and again via a live `uvicorn` server — both correctly recovered all 3 EDUCATION entries and the single honest EXPERIENCE fallback.
+
+### Lessons
+
+- Hand-tracing against real data *before* proposing a design (not after) is what surfaced the EXPERIENCE zero-date case — if the design had been proposed first and tested second, this stress case might have been found only after implementation, when a fix is more disruptive.
+- A second reviewer's most valuable contribution this round wasn't a different design — it was catching two places where the write-up *overclaimed* what the code actually guarantees ("title = institution" instead of "title = the line the extractor found"). Precision in documentation matters as much as correctness in code, since future-you (or an interviewer) will trust the written contract over re-reading the implementation.
+- Implementing the approved design surfaced one more edge case neither reviewer traced (a blank line directly before a date line) — a reminder that cross-review catches a different class of issue than implementation-time testing; both are needed, neither substitutes for the other.
+
+------------------------------------------------------------------------
+
+## Job Description Ingestion (Session 13, Claude, cross-reviewed with ChatGPT)
+
+### Achievements
+
+- Actually researched before designing, per this document's own "least explored, start with research" note: read the frontend scaffold, the `/upload-job` route stub's existing signature, and the `Job` table schema to establish the format is PDF (not pasted text) — two independent scaffold artifacts agreed, and the schema wasn't actually a contradiction once compared directly to how `Resume.raw_text` already works.
+- Read `section_detector.py`'s actual matching logic (not assumed) to identify a concrete, traceable risk: a JD's own "Education"/"Experience" requirement subheadings would exact-match the existing resume `ALIASES` table if `detect_sections()` were reused, silently mislabeling JD content as resume sections. This directly justified not reusing it.
+- Designed `parse_job_description()` reusing `extract_text()`/`clean_text()` (both verified generic) while explicitly rejecting `detect_sections()`/any resume extraction stage.
+- Decided job title is a required user-provided form field, not extracted — the one prior extraction milestone this differs sharply from: every earlier heuristic (contact, name, entries) was verified against a real resume before shipping, and no real JD sample exists anywhere in this repo to validate a title heuristic against.
+- Decided against introducing a `ParsedJobDescription` domain model, consistent with the project's "only introduce a model once multiple consumers exist" pattern (no second JD-processing stage exists yet).
+- Cross-reviewed the full design with ChatGPT (including the actual `detect_sections()` collision example) before implementing; ChatGPT's one substantive addition was the `parse_job_description()` orchestration-helper suggestion, adopted, plus a tech-debt note about `clean_text()`'s ownership (see Section 18).
+- Implemented `src/job_pipeline.py`, `UploadJobResponse`, and `POST /upload-job` (`title: str = Form(...)` + `file: UploadFile`), persisting `Job` + `Upload`, mapping `PDFParseError` → 422, excluding the full `description` from the response (same reasoning as `raw_text` on `/upload-resume`).
+- Added 9 new tests (`parse_job_description()` unit tests including the literal Education/Experience collision content as a test case; `/upload-job` API tests for success, missing-title 422, and empty-PDF 422) — 85/85 total passing.
+- Manually verified against a live server using a generated JD PDF containing the exact collision case: confirmed the DB stored the JD's "Education"/"Experience" subheadings as plain, untouched text.
+
+### Lessons
+
+- This milestone needed real research before any design was possible — unlike the last three sessions, which extended an already-established resume pipeline, JD ingestion required checking assumptions against actual scaffold code (frontend widget, route stub, DB schema) that had sat untouched since Session 1.
+- A risk found by reading actual matching logic (the `ALIASES` collision) is categorically stronger evidence than a risk reasoned about in the abstract — this is the same discipline Session 6 used when it insisted on running code rather than trusting a description of it.
+- Not every extraction slice needs a heuristic — sometimes the right design is recognizing that no evidence exists to build one responsibly (job title), and asking for the data directly instead of guessing.
+
+------------------------------------------------------------------------
+
 # 16. Current TODO
 
 ## High Priority
 
-- Wire `src/pipeline.py`'s `process_resume()` into the FastAPI `/upload-resume` route (needs: a real DB-session `Depends` pattern, HTTP error mapping for `PDFParseError`, and the project's first API tests via `TestClient` — all still nonexistent)
-- Design education/experience entry extraction (dates, companies, degrees) as the next extraction slice
+- Wire the remaining 3 stub routes (`/upload-job` is now done): `/rank`, `/results`, `/download` — `/rank` depends on Embeddings/Similarity/Scorer, none of which exist yet
+- Begin the Embeddings module — the next unbuilt architecture stage (Section 4), now that both required inputs (resumes, job descriptions) are ingested and persisted
 - Extend `ALIASES` for further common headings not yet recognized (e.g. Certifications synonyms, Summary synonyms)
-- **Not yet scheduled but large and unstarted**: Job Description ingestion (no parser/model/route exists — the Vision requires it, nothing built so far touches it) and an Export module (final architecture step, doesn't exist). Neither has a milestone plan yet; either could reasonably become "the next session" instead of the two options below.
+- **Not yet scheduled but large and unstarted**: Job Description ingestion (no parser/model/route exists — the Vision requires it, nothing built so far touches it) and an Export module (final architecture step, doesn't exist).
 
 ## Medium
 
 - Non-NANP phone format support (revisit stdlib-vs-`phonenumbers` decision if needed)
 - Additional Unicode normalization
+- `MAX_UPLOAD_SIZE_MB` (in `app/backend/config.py`) is still defined but unenforced by `/upload-resume` — no size validation exists yet
+- `UPLOAD_DIR` has no retention/cleanup policy — every upload is kept indefinitely under a `uuid4`-prefixed filename
 
 ## Low
 
@@ -873,28 +1397,16 @@ Lessons
 
 Goal
 
-Three live options, not yet narrowed down — confirm with the user which one before planning: (1) wire `process_resume()` into the FastAPI `/upload-resume` route, (2) begin the next resume-extraction slice (education/experience entries), or (3) start Job Description ingestion, which nothing built so far touches at all and which the Vision (Section 2) requires. Pick one, don't bundle multiple (see Session 8's scope-narrowing decision and its lesson about reading unexamined areas before committing to scope).
+One clear recommendation, still worth confirming with the user: begin the **Embeddings module** — the next unbuilt architecture stage (Section 4), and the natural next step now that both Vision-required inputs (resumes via `/upload-resume`, job descriptions via `/upload-job`) are ingested and persisted. The alternative — wiring `/rank`/`/results`/`/download` — isn't really independent of this: `/rank` has nothing to call without Embeddings/Similarity/Scorer existing first, so it's not a true fork the way past sessions' choices were.
 
-Tasks (if API wiring)
+Tasks (if Embeddings)
 
-- Design a `Depends`-compatible DB session generator (none exists yet; `get_session()` is a plain factory).
-- Decide HTTP error mapping for `PDFParseError` (e.g. 422 vs 400).
-- Add the project's first API tests via `TestClient`.
-- Decide what `/upload-resume` persists (which `PipelineResult` fields map to which `Resume`/`Candidate` columns).
+- Design what gets embedded: resume raw/normalized text vs. section-level text vs. something entry-aware (education/experience entries exist now, contact info doesn't need embedding) — this is a real design decision, not obviously "embed everything."
+- Design what a JD's embedding target is: `Job.description` is the only text available (no JD section structure exists, by deliberate design — see Section 11).
+- Decide on a sentence-transformer model (already a dependency: `sentence-transformers`/`torch`) and confirm the "Embedding <1 sec" performance goal (Section 19) is realistic before committing.
+- Add comprehensive unit tests; verify against real data (the sample resume, and a generated JD, same discipline as every prior milestone this session).
 
-Tasks (if extraction slice)
-
-- Design a representation for extracted entries within EDUCATION/EXPERIENCE sections (still no NLP dependency unless a concrete need forces one).
-- Extend `ALIASES` for common headings not yet recognized.
-- Add comprehensive unit tests.
-
-Tasks (if Job Description ingestion — least explored option, start with research)
-
-- Explore first: no one has looked at whether a JD is expected as a PDF (reusing `extract_text`), pasted text, or something else — the Vision (Section 2) just says "accepts a Job Description," undefined further. Check `src/database/models.py`'s `Job` table (`id`, `title`, `description`, `created_at`) for hints about the intended shape.
-- Decide whether JD parsing reuses existing parser/preprocess stages or needs its own, given a JD is structurally very different from a resume (no sections like Experience/Education in the same sense).
-- Add comprehensive unit tests.
-
-Do not begin embeddings, semantic search, scoring, or LLM feedback until resume preprocessing is fully complete.
+Note: the older "do not begin embeddings until resume preprocessing is fully complete" gate (from before Job Description ingestion existed) is arguably satisfied now — contact/name/education/experience extraction and JD ingestion are all done. Skills extraction is still unimplemented, but nothing about semantic embedding requires it (skill-matching is a separate scoring signal, not a prerequisite for embedding text). Confirm this reading with the user before proceeding, rather than silently reinterpreting an old constraint.
 ------------------------------------------------------------------------
 
 # 18. Known Technical Debt
@@ -918,12 +1430,75 @@ Do not begin embeddings, semantic search, scoring, or LLM feedback until resume 
     heuristic, since plain extracted text carries no formatting cues
     (bold, font size) to reliably distinguish a novel heading from a
     short content line like a job title.
--   `src/pipeline.py`'s `process_resume()` chains parse → preprocess →
-    detect sections → extract contact info, but is not yet called
-    from anywhere — `app/backend/api/routes.py`'s `/upload-resume` is
-    still a stub (`raise NotImplementedError`), and there is no
-    FastAPI DB-session dependency pattern to persist a `PipelineResult`
-    even once it's called.
+-   `/upload-resume` now persists `Upload`/`Candidate`/`Resume`, but
+    `Score` and `Feedback` remain entirely unpopulated — nothing
+    computes a score yet, so nothing has a score/feedback to persist.
+-   `Candidate` rows are never deduplicated — re-uploading the same
+    person's resume creates a new `Candidate` (and `Resume`) row every
+    time. Accepted for now (Section 11); revisit once a concrete
+    requirement needs "one candidate, many resumes" semantics.
+-   When name extraction returns `None`, `/upload-resume` silently
+    skips `Candidate`/`Resume` persistence (`Upload` only) — a user
+    uploading such a resume gets a 200 with `resume_id`/`candidate_id`
+    both `None` and no visible error explaining why nothing was saved.
+    Accepted as correct behavior (Section 11) but worth noting as a
+    UX gap once there's a frontend to surface it in.
+-   `ResumeEntry` extracts structural fields only (`title`/`dates`/
+    `details`) — degree, GPA, institution vs. company, and location
+    are not decomposed and remain embedded in `details` as raw text.
+    Accepted (Section 11): no reliable text-only delimiter exists to
+    split them without guessing. Revisit only if a dedicated semantic
+    parsing stage is deliberately introduced later (ChatGPT's
+    suggested future direction: `ResumeEntry` → `EducationRecord`/
+    `ExperienceRecord`, a separate pipeline stage, not a fatter
+    `ResumeEntry`).
+-   Entry segmentation assumes one date anchor per logical entry — a
+    single entry containing more than one standalone date-shaped line
+    (e.g. a sub-timeline within one job) will be over-segmented into
+    multiple `ResumeEntry` objects. Not observed in the one real
+    resume available; logged as a known, plausible gap rather than
+    guarded against without evidence.
+-   No `Education`/`Experience` DB tables exist — extracted entries
+    are returned in the API response but never persisted, same
+    extraction-before-persistence sequencing already used for contact
+    info and name.
+-   `clean_text()` is currently an inner implementation detail of
+    `src/preprocess/preprocessor.py`, but now has two consumers
+    (`preprocess()` for resumes, `parse_job_description()` for JDs via
+    direct import). Tolerated for now (per ChatGPT cross-review) —
+    two consumers doesn't yet justify moving it. Revisit trigger: if a
+    third document type needing the same text hygiene appears (e.g.
+    cover letters), promote `clean_text()` into a shared, generic text
+    normalization utility module instead of leaving it inside a
+    resume-specific file.
+-   `Job.title` is a required, unvalidated free-text field — no
+    minimum length, no uniqueness constraint, no attempt to detect a
+    near-duplicate job posting. Accepted for this milestone (Section
+    11); no requirement yet forces more than "the user typed
+    something."
+-   No `ParsedJobDescription` domain model exists — `parse_job_description()`
+    returns a plain `str`. Accepted (Section 11); revisit if a second
+    JD-processing stage needs a stable, richer input contract.
+-   Name extraction (`src/extraction/name_extractor.py`) assumes the
+    first non-empty HEADER line is the name. A resume whose HEADER
+    opens with an address, objective statement, or anything else
+    before the name will misextract (returns that line, or — if it
+    happens to look like an email/phone — `None`). No real resume
+    seen so far exhibits this; documented as an accepted gap, not
+    fixed with an untuned heuristic (e.g. a word-count cap).
+-   The other 4 routes (`/upload-job`, `/rank`, `/results`, `/download`)
+    are still `raise NotImplementedError` stubs.
+-   No request-size validation on `/upload-resume` — `MAX_UPLOAD_SIZE_MB`
+    is defined in config but not enforced. No cleanup/retention policy
+    on `UPLOAD_DIR` — every uploaded file is kept indefinitely.
+-   `PipelineResult` (`src/pipeline.py`) is a flat bundle of exactly two
+    fields (`sections`, `contact`) with one caller (`/upload-resume`).
+    ChatGPT's cross-review flagged that as more pipeline stages arrive
+    (embeddings, similarity, scoring, feedback) a flat result type may
+    stop being the right orchestration contract, and a dedicated
+    application-level Pipeline Orchestrator might become more
+    appropriate. Not an action item — a revisit trigger for whenever a
+    second caller or a third+ stage actually needs it.
 -   Contact extraction's phone regex covers common NANP formats only
     (with/without `+1`, parens/dashes/dots/spaces); non-NANP
     international formats and extensions (`x123`) are not recognized.
@@ -978,6 +1553,27 @@ You should be able to explain:
 -   Why contact extraction only reads the HEADER section instead of scanning the whole document
 -   Why `PipelineResult` lives outside `src/models/` unlike the other domain models
 -   Why wiring the API route was deliberately deferred instead of bundled into this milestone
+-   Why `get_db()` (a generator) replaced `get_session()` (a plain factory), and why that's the idiomatic FastAPI pattern
+-   Why `PDFParseError` maps to HTTP 422 instead of 400
+-   Why `/upload-resume` persists to the `Upload` table only, and doesn't invent a placeholder `Candidate.name` to populate the rest of the schema today
+-   Why `Resume.raw_text` is defined as `ParsedResume.raw_text` (canonical parser output) rather than `StructuredResume.normalized_text` (a derived artifact)
+-   Why the route calls `process_resume()` unchanged instead of inlining the four-stage chain, even though that would have avoided a hypothetical `PipelineResult` expansion
+-   Why a `git add <paths>` that omits a deleted file's path won't stage that deletion
+-   Why `CandidateName` is a separate model from `ContactInfo` instead of a third field on it
+-   Why name extraction uses a first-HEADER-line heuristic, and what real-world resume layout would break it
+-   Why `PipelineResult` gaining a `name` field isn't the "expansion for convenience" the project otherwise avoids
+-   Why `PipelineResult` gained a `raw_text` field, but the API response deliberately doesn't return it
+-   Why `UploadResumeResponse` (`app/backend/api/schemas.py`) exists as a route-local schema instead of returning `PipelineResult` directly, and why introducing it now isn't the same as the "no schemas yet" gap being a mistake
+-   Why `Candidate` rows aren't deduplicated on re-upload, and what would change that decision
+-   Why `/upload-resume` skips `Resume`/`Candidate` persistence entirely (rather than writing a partial row) when name extraction finds nothing
+-   Why entry segmentation anchors on standalone date lines (`re.fullmatch`) instead of blank lines, and what real resume content proved blank-line segmentation wrong
+-   Why `ResumeEntry` doesn't have separate `degree`/`company`/`location`/`GPA` fields, and what evidence justifies that boundary
+-   Why the extractor returns one honest fallback entry (not zero, not a guess) when a section has no date lines at all
+-   Why "the line before the date becomes the title" is documented as an implementation rule rather than a claim about how resumes are generally structured
+-   Why Job Description ingestion reuses `extract_text()`/`clean_text()` but not `detect_sections()`, and the concrete collision case that proves the risk
+-   Why a job title is a required user input rather than extracted, in contrast to a resume's name
+-   Why no `ParsedJobDescription` domain model exists, and what would justify introducing one
+-   Why `clean_text()` still lives inside `preprocessor.py` despite having two consumers now, and what would justify moving it
 
 ------------------------------------------------------------------------
 
@@ -1060,3 +1656,50 @@ Completed (Session 8)
 - Added 5 unit tests (real PyMuPDF-generated PDF, not synthetic dataclasses) — 51/51 total passing.
 - Manually verified against the actual `samples/Manish_ResumeDA01.pdf` resume, not just test fixtures — correct email, phone, and six ordered sections.
 - PROJECT_BIBLE synced with repository (version, module status, testing status, TODO/next session split by option, tech debt, session log, interview talking points).
+
+Completed (Session 9)
+
+- Committed and pushed all previously-uncommitted Session 5–8 work (`feature/pipeline-orchestration`, PR #2, merged to `main`); found and fixed a stale-tracked-deletion bug (`resume_models.py`) introduced during that commit.
+- Designed `/upload-resume` wiring and cross-reviewed the design with ChatGPT to convergence, including ChatGPT reversing an initial suggestion after further exchange (keep `process_resume()` as the single orchestration path; don't expand `PipelineResult`; the apparent trade-off between the two dissolved once this milestone's actual persistence scope was checked).
+- Replaced `get_session()` with a generator-based `get_db()` `Depends` dependency; wired the previously-never-called `init_db()` into FastAPI startup.
+- Implemented `POST /upload-resume`: save → `process_resume()` → 422 on `PDFParseError` → persist `Upload` row only → return `sections` + `contact`.
+- Added the project's first API test infrastructure (`tests/conftest.py`, isolated in-memory DB, `TestClient`) and 3 new tests — 54/54 total passing.
+- Manually verified against a live `uvicorn` server with the real sample resume PDF (200 response, correct `Upload` row, correct OpenAPI schema); cleaned up test artifacts afterward.
+- PROJECT_BIBLE synced with repository (version, module status, testing status, verification checklist, new design decisions, tech debt, session log, TODO/next session, interview talking points).
+
+Completed (Session 10)
+
+- Reviewed the design (Option A: standalone `CandidateName` model + `name_extractor.py`, vs. Option B: extend `ContactInfo`) before coding; chose Option A for semantic clarity and to avoid a future breaking rename.
+- Added `CandidateName` domain model and `extract_name()`, reusing `contact_extractor.py`'s existing email/phone regexes for a defensive check.
+- Wired `name: CandidateName` into `PipelineResult`/`process_resume()`.
+- Added 7 new extractor unit tests plus assertions in the existing pipeline and API tests — 62/62 total passing.
+- Manually verified against the real sample resume — correctly extracted "Manish Kumar Gupta".
+- PROJECT_BIBLE synced with repository (version, domain models, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points).
+
+Completed (Session 11)
+
+- Surfaced and resolved four design forks before coding: `raw_text` sourcing, `Candidate` dedup, the `None`-name persistence path, and API response shape.
+- Added `raw_text` to `PipelineResult`; introduced `app/backend/api/schemas.py`'s `UploadResumeResponse` (first concrete API schema) to keep it out of the HTTP response while exposing new `resume_id`/`candidate_id` fields.
+- Wired `Candidate`/`Resume` persistence into `/upload-resume`, conditional on name extraction succeeding; `Upload` always persists.
+- Added/updated tests for all four decisions — 66/66 total passing.
+- Manually verified against a live server with the real sample resume: correct IDs returned, `raw_text` absence confirmed via `grep`, correct rows in the real DB.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points).
+
+Completed (Session 12)
+
+- Hand-traced candidate heuristics against the real sample resume before designing — found blank-line segmentation fails entirely, and the real EXPERIENCE section has zero date lines (a genuine stress case).
+- Designed and cross-reviewed date-anchored segmentation with ChatGPT, incorporating two requested wording/documentation refinements (implementation-rule framing, one-date-per-entry limitation).
+- Implemented `ResumeEntry` + `extract_entries()`, catching a blank-line-before-date edge case during implementation that neither hand-trace nor cross-review had covered.
+- Wired `education`/`experience` into `PipelineResult`/`UploadResumeResponse`; deferred DB persistence (no tables exist yet).
+- Added 8 new extractor tests (using real hand-traced content as literal test cases) plus new pipeline/API test assertions — 76/76 total passing.
+- Manually verified against the real sample resume twice (direct pipeline call, live server) — correct 3-entry EDUCATION segmentation and honest 1-entry EXPERIENCE fallback both times.
+- PROJECT_BIBLE synced with repository (version, domain models, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points).
+
+Completed (Session 13)
+
+- Researched before designing: read the frontend scaffold, route stub, and `Job` schema to establish PDF-not-text; read `section_detector.py`'s actual matching logic to find a concrete Education/Experience collision risk with reusing `detect_sections()` on JD content.
+- Cross-reviewed the design with ChatGPT (including the collision example); adopted its `parse_job_description()` orchestration-helper suggestion and logged its `clean_text()`-ownership tech debt note.
+- Implemented `src/job_pipeline.py`, `UploadJobResponse`, and `POST /upload-job` — persists `Job`+`Upload`, required user-provided title, `PDFParseError` → 422, `description` excluded from the response.
+- Added 9 new tests, including the literal collision-case content as a test case — 85/85 total passing.
+- Manually verified against a live server with a generated JD PDF containing the exact collision case: confirmed the DB stored "Education"/"Experience" as plain text, not resume sections.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points).
