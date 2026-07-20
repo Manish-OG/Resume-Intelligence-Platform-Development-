@@ -52,6 +52,32 @@ def test_process_resume_produces_correct_contact_info(sample_pdf):
     assert result.contact.phone == "(555) 123-4567"
 
 
+def test_process_resume_produces_correct_name(sample_pdf):
+    result = process_resume(sample_pdf)
+
+    assert result.name.name == "Jane Doe"
+
+
+def test_process_resume_raw_text_matches_parser_output(sample_pdf):
+    result = process_resume(sample_pdf)
+
+    assert "Jane Doe" in result.raw_text
+    assert "Backend Engineer at Acme" in result.raw_text
+
+
+def test_process_resume_produces_fallback_education_experience_entries(sample_pdf):
+    # Fixture has no date lines in EXPERIENCE/EDUCATION, so each
+    # should fall back to one entry (see entry_extractor's zero-date
+    # fallback), not raise or be empty.
+    result = process_resume(sample_pdf)
+
+    assert len(result.experience) == 1
+    assert "Backend Engineer at Acme" in result.experience[0].details
+
+    assert len(result.education) == 1
+    assert "BSc Computer Science" in result.education[0].details
+
+
 def test_process_resume_missing_file_raises_pdfparseerror():
     with pytest.raises(PDFParseError):
         process_resume("does-not-exist.pdf")
