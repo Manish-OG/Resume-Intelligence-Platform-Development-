@@ -19,7 +19,7 @@
 - ML Engineer
 - GenAI Engineer
 
-**Current Version:** v0.19.0
+**Current Version:** v0.20.0
 
 **Current Status:** Active Development
 
@@ -27,51 +27,49 @@ Current Milestone:
 Resume Intelligence Engine (In Progress)
 
 Latest Completed Milestone:
-Feedback exposed via the API — `POST /rank` and `GET /results` now
-both return a `CandidateAssessment` per candidate (`ranking` +
-`feedback`, composed at the API layer, not bolted onto
-`RankedCandidate`). `GET /download`'s CSV is deliberately untouched.
-Fifth consecutive plan-then-cross-review milestone; the first to
-directly and successfully address every concern the immediately
-preceding review raised, with no new disagreements — see Section 11.
+The Streamlit frontend is wired to the real backend API for the first
+time — title input, a two-step Upload/Rank flow, inline `httpx` calls
+(no shared types with the backend), partial-upload-failure handling,
+and `CandidateAssessment` rendering with a prominent final score per
+candidate. First milestone under the plan-then-cross-review workflow
+that is UI/UX-shaped rather than backend-architecture-shaped; the
+review's one substantive pushback (a premature `api_client.py`
+abstraction) was adopted and reversed the plan — see Section 11.
 
-**Overall Progress:** ~85%
+**Overall Progress:** ~92%
 
-Caveat on that number (updated Session 23, first written Session 8):
-~85% reflects real, composed, end-to-end functionality: both ingestion
-sides persist real rows, `POST /rank` genuinely ranks, scores, and
-explains every persisted resume against a job and now returns that
-explanation, `GET /results` genuinely retrieves the same ranking +
-explanation later, `GET /download` genuinely exports the ranking as
-CSV — all verified against real data (Section 14), including
-confirming `/rank` and `/results`' JSON responses are identical for
-the same job. It does **not** mean 85% of the working product
-described in the Vision below exists: the actual frontend is still
-scaffold — that is the one gap left. See Section 12 (Module Status)
-and Section 18 (Known Technical Debt) for the honest breakdown.
+Caveat on that number (updated Session 24, first written Session 8):
+~92% reflects real, composed, end-to-end functionality reachable from
+an actual browser UI, not just Swagger/`TestClient`: a user can type a
+job title, upload a JD PDF and one or more resume PDFs, click Upload,
+click Rank, and see each candidate's real final score plus real
+feedback rendered on screen — verified live (Section 14), including a
+genuine cold-start `/rank` call and a genuine partial-upload-failure
+case (one corrupt PDF skipped, the rest ranked). It does **not** mean
+92% of the working product described in the Vision below is polished:
+the frontend is functional but visually minimal (no charts, no
+multi-job history, `AppTest`-level widget testing deliberately
+deferred — Section 16/18), and several small backend gaps remain
+(`/download` CSV feedback columns, real `missing_skills` values). See
+Section 12 (Module Status) and Section 18 (Known Technical Debt) for
+the honest breakdown.
 
-Git Note (updated Session 23, first written Session 8): Sessions 18
-through 23's work (experience/education scoring; `Scorer` blend +
-`Score` persistence; `GET /results`; `GET /download` + `Export`
-module; Feedback generation; Feedback API exposure) has been
-**committed and merged to `main`.** The user committed it as a single
-commit (not split per session — a more granular split was discussed
-but abandoned as impractical given how much several files, e.g.
-`app/backend/api/routes.py`, were re-touched across sessions) on a
-new branch, `feature/scoring-persistence-and-feedback`, opened as PR
-#6, and merged into `main` as `4d2d068`. The remote feature branch was
-deleted after merge (along with the repo's other, older feature
-branches — apparent repo housekeeping, not something done this
-session). Verified directly, not assumed: `git fetch` + `git status`
-confirmed local `main` matches `origin/main` exactly, working tree
-clean, and the full fast test suite (189 tests) re-run and passing
-directly on `main` post-merge — the actual merged content was checked,
-not just the merge event.
+Git Note (updated Session 24, first written Session 8): Session 24's
+work (`app/frontend/config.py`, rewritten `app/frontend/streamlit_app.py`,
+`docker-compose.yml`'s new `BACKEND_URL` env line, `tests/
+test_frontend_api_calls.py`) is implemented, tested (210/210 passing —
+195 fast + 15 slow, unchanged from Session 23 plus 6 new fast tests),
+and manually verified live, but **left uncommitted**, per the
+recurring commit-discretion rule (Sessions 18–23 all did the same —
+the user commits when ready, this document doesn't assume that
+happened). Sessions 18–23's own work was already confirmed merged to
+`main` (`4d2d068`, PR #6) as of the end of Session 23 — that remains
+true; Session 24 branches from a clean, up-to-date `main`.
 
-**No uncommitted work remains as of the end of Session 23.** A new
-session starting from here should treat `main` as the current, fully
-up-to-date source of truth and begin fresh work (see Section 17) —
-there is nothing pending to ask the user about committing.
+A new session starting from here should check `git status` before
+assuming Session 24's frontend work is or isn't committed — this
+document reflects the state as of when Session 24 ended, not
+necessarily what's true when a new session begins.
 
 (The previously-noted stray `extract` file was resolved and deleted
 with the user's explicit permission in an earlier session; no longer
@@ -1703,10 +1701,10 @@ Status: Accepted.
 | Feedback | Fully live, end to end — `generate_feedback()` (`src/feedback/generator.py`) is called by every `/rank` request; `POST /rank` and `GET /results` now both return it (as `CandidateAssessment.feedback`, Session 23), not just persist it. `missing_skills` stays `None` (Section 11) — a real, documented gap, not a fabricated empty answer. |
 | Database | `Upload`, `Candidate`, `Resume` written by `/upload-resume`; `Upload`, `Job` written by `/upload-job`; `Score` and `Feedback` written by `/rank` (both upserted, both backed by real uniqueness constraints — Section 11), all verified against real data. |
 | Backend | All 5 routes named in the Section 4 architecture diagram are live: `POST /upload-resume`, `POST /upload-job`, `POST /rank`, `GET /results`, `GET /download` — every one tested and manually verified against real data. `/rank` and `/results` now return `CandidateAssessment` (`ranking` + `feedback`) per candidate — verified identical between the two live. `/download`'s CSV deliberately unaffected (verified byte-for-byte unchanged). |
-| Frontend | Scaffold — Streamlit UI renders upload widgets and a "Rank" button, but the handler just shows `"Ranking pipeline not implemented yet"`; no `src/` imports, no API calls |
+| Frontend | Live — `app/frontend/streamlit_app.py` calls the real backend over `httpx` (`BACKEND_URL`-configured, no shared types with the backend — Section 11). Two-step flow: Upload (title + JD PDF + resume PDFs, with per-file failure handling) then Rank (`POST /rank`, cold-start caption). Renders `CandidateAssessment` per candidate: prominent `final_score` metric always visible, a `Details` expander with the four component scores, recommendation, strengths/weaknesses, and `missing_skills` (only when not `None`). Manually verified live, including a real cold-start `/rank` call and a real partial-upload-failure case. |
 | Export | Live — `export_ranked_candidates_to_csv()` (`src/export/csv_exporter.py`) is called by every `GET /download` request. First and only implementation so far (CSV); a pure formatting function, no FastAPI/SQLAlchemy dependency. |
 
-**Honest summary**: resume ingestion, Job Description ingestion, ranking, results retrieval, CSV export, feedback generation, and now feedback exposure all work end-to-end — every pipeline stage *and* every response in the Section 4 architecture diagram is now live and fully surfaced, for the first time this project. `/rank` computes, persists, and returns a genuine blended `final_score` plus a genuine, honest explanation per candidate; `/results` retrieves the identical pair later; `/download` exports the ranking alone, deliberately. This included a real bug found via verification in Session 16 (garbage pseudo-skills bleeding into SKILLS), a real, honest data limitation surfaced via hand-tracing in Session 18 (the sample resume's EXPERIENCE section has zero parseable dates) that directly shaped Session 22's feedback wording, a real deserialization bug (`"".split("\n") == ['']`) caught during Session 23's design *before* any reader existed to ship it, and five consecutive plan-then-cross-review-then-implement milestones (Sessions 19–23) — Session 22 drew substantial pushback and was scoped down; Session 23 is the first to fully resolve a prior review's concerns with nothing left open. What's still missing: the frontend is still scaffold — that is the one gap left between this backend and the Vision in Section 2. Five end-to-end user flows are possible, and for the first time the explanation isn't just sitting in the database — a caller asking "why did this candidate rank here" gets a real, honest answer back.
+**Honest summary**: resume ingestion, Job Description ingestion, ranking, results retrieval, CSV export, feedback generation, feedback exposure, and now the frontend all work end-to-end — every pipeline stage, every response in the Section 4 architecture diagram, and now the UI that surfaces them to an actual user are all live, for the first time this project. `/rank` computes, persists, and returns a genuine blended `final_score` plus a genuine, honest explanation per candidate; `/results` retrieves the identical pair later; `/download` exports the ranking alone, deliberately; the Streamlit UI now lets a real user drive all of that from a browser instead of Swagger/`TestClient`. This included a real bug found via verification in Session 16 (garbage pseudo-skills bleeding into SKILLS), a real, honest data limitation surfaced via hand-tracing in Session 18 (the sample resume's EXPERIENCE section has zero parseable dates) that directly shaped Session 22's feedback wording, a real deserialization bug (`"".split("\n") == ['']`) caught during Session 23's design *before* any reader existed to ship it, six consecutive plan-then-cross-review-then-implement milestones (Sessions 19–24) — Session 22 drew substantial pushback and was scoped down; Session 23 fully resolved a prior review's concerns with nothing left open; Session 24 is the first UI/UX-shaped milestone in that sequence, and its review's one substantive pushback (a premature `api_client.py` module) was adopted, reversing part of the plan before any code was written. What's still missing: the frontend is functional but deliberately minimal (Section 16/18) — this is the first session where "is the Vision built" and "is the backend architecture sound" are no longer the same question. Five end-to-end user flows are possible through a real browser UI, and the explanation isn't just sitting in the database or a JSON response — a real user asking "why did this candidate rank here" sees a real, honest answer on screen.
 ------------------------------------------------------------------------
 
 # 13. Testing Status
@@ -1793,9 +1791,11 @@ Current
 
 ✅ `/rank` integration tests updated for the new nested response shape (`pytest -m slow`): all existing field assertions (`semantic_score`, `skill_score`, `final_score`, etc.) now read through `candidate["ranking"][...]`, plus a new assertion that `feedback.recommendation` is present and non-empty; `/rank` ↔ `/results` full-response equality re-verified with the richer shape (proves feedback round-trips identically through persistence + re-read, not just the scores)
 
+✅ Frontend HTTP-call tests passing (new `tests/test_frontend_api_calls.py`, fast, no live server): `upload_job()`/`upload_resume()`/`rank()` proven to send the right method/path/form-fields/files/query-params against an `httpx.MockTransport`, and to raise `APIError` (status code + `detail`) on a non-2xx response — success and failure paths for all three calls. `AppTest` widget-level testing deliberately deferred (Section 11/16) — this project's frontend has almost no interactive logic yet beyond forms and rendering.
+
 Current Result
 
-204 tests total — 189 / 189 passing by default (`pytest`, ~2 sec); 15 / 15 additional real-model tests passing on demand (`pytest -m slow`, ~21 sec)
+210 tests total — 195 / 195 passing by default (`pytest`, ~3 sec); 15 / 15 additional real-model tests passing on demand (`pytest -m slow`, ~17 sec)
 
 ------------------------------------------------------------------------
 
@@ -1973,6 +1973,33 @@ Completed
     responses for the same job and confirmed they were identical.
     Confirmed `/download`'s CSV output was byte-for-byte unchanged
     from before this milestone. Cleaned up afterward.
+-   Frontend manually verified against a real `uvicorn` backend + real
+    `streamlit run` frontend (not `TestClient`, not a mocked
+    transport) via a live browser session: typed a job title, uploaded
+    a small synthetic JD PDF and a small synthetic resume PDF through
+    the actual file-picker widgets (injected as real `File`/
+    `DataTransfer` objects, exercising the same upload code path a
+    human would), clicked Upload — got `"Uploaded job \"Electronics
+    Engineer\" and 1 of 1 resume(s)."` and a real `job_id`. Clicked
+    Rank candidates — confirmed the cold-start caption rendered, then
+    confirmed via the live backend log that this was a genuine cold
+    model load (`Load pretrained SentenceTransformer: all-MiniLM-L6-v2`
+    followed by `POST /rank?job_id=1 HTTP/1.1" 200 OK`), not a
+    pre-warmed call. Confirmed the rendered candidate card: `final_score
+    0.77` prominent outside the expander, `Details` correctly showing
+    all four component scores, the recommendation sentence, strengths/
+    weaknesses bullets, and correctly *no* "Missing skills" section
+    (`missing_skills` is `None`, not `[]`) — a direct, on-screen check
+    of the None-vs-empty-list distinction Section 11 requires, not just
+    a unit-test assertion. Separately verified partial-upload-failure
+    handling live: uploaded one valid resume alongside a genuinely
+    corrupt "PDF" (5 garbage bytes) in the same batch — got `"Uploaded
+    job \"Electronics Engineer\" and 2 of 3 resume(s)."` plus a visible
+    `"Skipped corrupt.pdf: Failed to parse ..."` warning, confirming a
+    bad file in a batch doesn't block the rest. Cleaned up afterward
+    (scratch PDFs and live-server log deleted; `data/app.db`'s test
+    rows left in place — `data/` is gitignored, consistent with every
+    prior session's live-verification cleanup scope).
 
 ------------------------------------------------------------------------
 
@@ -2435,12 +2462,34 @@ Lessons
 
 ------------------------------------------------------------------------
 
+## Frontend Wiring (Session 24, Claude, plan drafted and cross-reviewed with ChatGPT before implementation — sixth milestone under Session 19's workflow, first that is UI/UX-shaped rather than backend-architecture-shaped)
+
+### Achievements
+
+- Read the actual frontend/backend/config files before drafting anything (not assumed): confirmed `streamlit_app.py` was still 13 lines of pure scaffold with no `title` input despite `/upload-job` requiring one, confirmed `backend`/`frontend` run as genuinely separate Docker containers (not the same process) via `docker-compose.yml`, and confirmed `httpx` was already a dependency (used only by backend tests) while `requests` was not present anywhere.
+- Drafted a plan explicitly built around the frontend as a true HTTP client — raw JSON in, render out, zero imports from `src/` or `app/backend/` — tracing directly back to Section 11's original "Separate App and AI Engine" decision rather than treating it as a new rule.
+- ChatGPT's review (9.2/10) agreed with the HTTP-client boundary, `httpx` over `requests`, `BACKEND_URL`-based config, partial-upload-failure handling, and session-state usage without change. Its one substantive disagreement — a proposed `app/frontend/api_client.py` wrapping three near-trivial `httpx` calls — was accepted and reversed the plan: three one-line wrappers with no retry/auth/caching logic don't clear this project's own "don't abstract until there's a second real reason" bar, the same principle that already kept `clean_text()` inside `preprocessor.py` and kept `ContactInfo` standalone. The review also pushed three real UX refinements adopted into the design: split "Upload" and "Rank" into two separate user actions (uploading is persistent, ranking is repeatable and retryable), make `final_score` visually prominent via `st.metric` rather than equal-weight with the four component scores, and give the ~20–30s cold-start wait explicit copy rather than a bare spinner.
+- Implemented `app/frontend/config.py` (`BACKEND_URL`, mirroring `app/backend/config.py`'s exact env-var pattern), rewrote `app/frontend/streamlit_app.py` (title input; two-step Upload/Rank flow; inline `httpx.Client` calls wrapped in a small `APIError` exception, not a separate client module; per-file try/except around `/upload-resume` so one corrupt PDF doesn't drop the rest of the batch; `st.session_state` for `job_id`/`uploaded_resumes`/`rank_response`; a `_render_candidate()` helper rendering `final_score` via `st.metric` outside a `Details` expander that holds the four component scores, the recommendation, strengths/weaknesses, and `missing_skills` only when not `None`); added one new `BACKEND_URL` line to `docker-compose.yml`'s `frontend` service.
+- Structured `streamlit_app.py`'s UI code behind a `render()` function called only under `if __name__ == "__main__":` — the standard idiom that lets `streamlit run` execute it as `__main__` while a plain `import` (as tests do) never triggers the page script, which is what made testing the HTTP-call functions in isolation possible without either mocking Streamlit itself or executing widget code at import time.
+- Added 6 new unit tests (`tests/test_frontend_api_calls.py`) against an `httpx.MockTransport` — no live server, no Streamlit runtime — covering both the success and `APIError` paths for all three calls (`upload_job`, `upload_resume`, `rank`), verifying actual request shape (method, path, multipart fields/files, query params), not just that a function was called.
+- Manually verified against a real `uvicorn` backend and a real `streamlit run` frontend in an actual browser session (not `TestClient`, not a mock): typed a title, uploaded a JD PDF and a resume PDF through the real file-picker widgets, clicked Upload, clicked Rank, watched a genuine cold model-load happen (confirmed via the live backend log, not assumed from timing alone), and saw a correctly rendered candidate card — prominent `final_score`, correct component scores, correct recommendation/strengths/weaknesses text, and a correctly *absent* "Missing skills" section reflecting the real `None` state. Separately verified the partial-upload-failure path live with a genuinely corrupt PDF mixed into a batch. Cleaned up scratch PDFs and logs afterward.
+- 210 tests total (195 fast + 15 slow), all passing — the 6 new frontend tests plus every pre-existing test unchanged.
+
+### Lessons
+
+- A plan that opens by praising "don't abstract prematurely" as a project value, and then proposes a three-function wrapper module in the very same document, is worth reviewing against its own stated principles before sending it out — the cross-review caught what a careful re-read of the plan itself should also have caught. Worth treating a plan's own philosophy section as a checklist against its own recommendations, not just a preamble.
+- Wrapping a Streamlit script's top-level UI code in `render()` + `if __name__ == "__main__":` costs nothing at runtime (Streamlit already executes the script as `__main__`) but is what made the HTTP-call functions unit-testable via a plain `import` — without it, importing the module for testing would have executed the entire page (widgets, layout, everything) on every test collection. A small, standard Python idiom, not a new abstraction, solved a testability problem the plan's testing section had flagged but not concretely resolved.
+- Injecting real `File`/`DataTransfer` objects via JavaScript into a headless browser's file-input elements is a legitimate way to drive a genuine multipart upload through actual widget code end-to-end (not a mock, not a `TestClient` call) when no native OS file-picker automation is available — worth remembering as a verification technique for any future file-upload UI work, not just this session's.
+- The review's UX pushback (split Upload/Rank, make the final score prominent, strengthen cold-start messaging) landed differently than every prior session's architecture pushback — none of it was "this will break," all of it was "this will feel worse than it needs to." Section 21's stated shift ("future reviews should ask 'will this actually feel good to use'") showed up concretely in this session's actual review content, not just as a stated expectation.
+
+------------------------------------------------------------------------
+
 # 16. Current TODO
 
 ## High Priority
 
-- Frontend wiring — Streamlit UI is still scaffold (renders widgets, but the "Rank" handler just shows a placeholder string, no `src/` imports or API calls). The one remaining gap between the current backend and the Section 2 Vision, now that `/rank`/`/results` return both ranking and feedback (Session 23).
 - Extend `ALIASES` for further common headings not yet recognized (e.g. Certifications synonyms, Summary synonyms) — same mechanism just used for "Positions of Responsibility"
+- `docker-compose up --build` has never actually been run against the new `BACKEND_URL`-based frontend/backend wiring (Session 24) — the frontend has only been verified via `streamlit run` talking to a locally-run `uvicorn` process, both on `localhost`. The Docker service-name-as-hostname path (`http://backend:8000`) is configured but unexercised.
 
 ## Medium
 
@@ -2455,6 +2504,9 @@ Lessons
 - `missing_skills` real values (Session 22) — still `None`; genuinely blocked on an independently-extracted JD skill list, which this project has no real JD corpus to validate a heuristic against. Would need real, varied JD examples to unblock, not more design effort against synthetic text.
 - **Watch item (Session 23, ChatGPT cross-review, not a bug):** `_ranked_candidates_for_job()` and `_candidate_assessments_for_job()` (`app/backend/api/routes.py`) are two similar-but-genuinely-different `Score`⋈...⋈`Candidate` join queries — accepted duplication for now. If a *third* similarly-shaped query appears (e.g. a future export-with-feedback or dashboard endpoint), that's the trigger to introduce a shared internal read model (ChatGPT's suggested shape: a `PersistedAssessment` representing the full join, projected per endpoint) rather than continuing to duplicate joins.
 - **Watch item (Session 23, ChatGPT cross-review, not a decision needed now):** `CandidateAssessment` (`app/backend/api/schemas.py`) is currently API-layer-only. If a second, non-API consumer of the ranking+feedback pairing ever appears (CLI, batch export, a frontend adapter), promote it into a shared `src/` domain object rather than leaving it API-specific indefinitely.
+- **Watch item (Session 24, ChatGPT cross-review, not a decision needed now):** the frontend's three HTTP calls (`upload_job`/`upload_resume`/`rank`) live inline in `app/frontend/streamlit_app.py` rather than a dedicated `api_client.py` — deliberately, since three near-trivial wrappers didn't justify a module boundary (Section 11). Revisit extraction once a 4th/5th backend endpoint gets wired, or once any real cross-cutting HTTP concern (retries, auth, consistent error formatting) needs to live in one place instead of three.
+- **Watch item (Session 24, not a decision needed now):** `streamlit.testing.v1.AppTest` widget-level testing was deliberately not added — this project's frontend has almost no interactive logic yet beyond forms and rendering (Section 13). Revisit once the UI gains real interactive behavior worth testing at the widget level (e.g. re-ranking, editing an uploaded set, pagination).
+- Frontend UI is functional but visually minimal (Session 24) — plain labeled component scores, no charts/graphs, no multi-job history or "browse past jobs" view (would need a `GET /jobs` endpoint that doesn't exist). None of this blocks the Vision (Section 2) as written; revisit only if a concrete need for richer UI emerges.
 
 ## Low
 
@@ -2467,16 +2519,17 @@ Lessons
 
 Goal
 
-One clear recommendation: **wire the frontend.** With `/rank`/`/results` now returning both ranking and feedback (Session 23), every backend capability the Section 2 Vision describes exists and is reachable — the Streamlit UI is the only piece left that doesn't actually call any of it (the "Rank" button currently just shows a placeholder string).
+With the frontend now wired (Session 24), every user-facing flow the Section 2 Vision describes exists and works from a real browser — for the first time, "is the backend architecture sound" and "is the product done" are genuinely different questions. Two reasonable, differently-scoped next steps; either is defensible, neither is forced:
 
-Tasks
+1. **Verify the Docker packaging actually works.** `docker-compose.yml` now has the `BACKEND_URL=http://backend:8000` wiring (Session 24) but it has never been run — `docker-compose up --build` and confirming the containerized frontend can actually reach the containerized backend by service name (not just `localhost`, which is all that's been tested) is a small, concrete, previously-unverified risk for a project whose Vision explicitly claims "production-grade."
+2. **Address a medium-priority tech-debt item now that the big Vision gaps are closed** — e.g. `computed_at`/`last_ranked_at` on `Score` (raised twice already, Sessions 19/20), or the `semantic_score` range-mismatch architectural debt (Section 11/18), or `MAX_UPLOAD_SIZE_MB` enforcement. None of these are urgent; picking one is about polish now that there's no large missing piece left.
 
-- Decide scope for a first cut: upload widgets already exist in the scaffold — wiring them to `POST /upload-resume`/`POST /upload-job` is likely the natural starting point, then the "Rank" button to `POST /rank`, then rendering `CandidateAssessment`'s `ranking`/`feedback` per candidate.
-- Decide how feedback specifically gets displayed — `strengths`/`weaknesses` are lists of plain-language sentences; decide the UI treatment (expandable sections? always-visible? per-candidate cards?) with actual real feedback text in hand (Session 22's hand-traced examples are a good starting reference) rather than designing against a hypothetical.
-- Decide whether the frontend calls the backend directly (same process/host, simplest) or whether any config/URL handling is needed — check `app/frontend/streamlit_app.py`'s current scaffold and `app/backend/config.py` before assuming.
-- Continue the plan-then-cross-review workflow (Sessions 19–23) — draft a plan document first, get it reviewed, then implement. This is a different kind of milestone than the last several (UI/UX decisions, not backend architecture) — expect the review to weigh in differently than on a routes-and-persistence plan.
-- Add tests where meaningful (Streamlit UI testing has different tooling/conventions than the backend's `pytest`+`TestClient` setup — figure out what's appropriate before assuming `pytest` patterns carry over unchanged); verify by actually running the app and using it, not just unit-testing handler functions in isolation.
-- Not in scope: `/download` CSV feedback columns, `missing_skills` real values, the query-duplication/`CandidateAssessment`-promotion watch items (Section 16) — none are blocking frontend work.
+Tasks (if continuing with option 1 — recommended, since it's small, concrete, and closes a real unverified gap rather than being open-ended polish)
+
+- Run `docker-compose up --build` from a clean state; confirm both containers start, the backend's `/health` responds, and the frontend loads.
+- Repeat this session's live verification (upload JD + resume, Upload, Rank, confirm candidate rendering) against the *containerized* stack, not `localhost` processes — this is the first time the `BACKEND_URL=http://backend:8000` path would actually be exercised.
+- If anything breaks, decide whether the fix belongs in `docker-compose.yml`, the `Dockerfile.frontend`/`Dockerfile.backend` build, or `app/frontend/config.py` before assuming which layer is wrong.
+- Not in scope: any of Section 16's Medium/watch items, `/download` CSV feedback columns, `missing_skills` real values, `api_client.py` extraction, `AppTest` — none are blocking a Docker verification pass.
 
 ------------------------------------------------------------------------
 
@@ -2563,8 +2616,10 @@ Tasks
     fixed with an untuned heuristic (e.g. a word-count cap).
 -   No stub routes remain — `GET /download` (Session 21) was the last
     one. Feedback is now generated, persisted, *and* exposed
-    (Session 23) — the frontend is the only gap left before the
-    Section 2 Vision is fully real (see Section 17).
+    (Session 23), and the frontend now calls all of it from a real
+    browser UI (Session 24) — no gap remains between the backend and
+    the Section 2 Vision's user-facing flows; remaining work is
+    polish/verification, not missing functionality (see Section 17).
 -   `GET /download`'s CSV still doesn't include feedback — deliberately
     left out of Sessions 21, 22, *and* 23 (Section 11), not an
     oversight repeated by accident. `strengths`/`weaknesses` are
@@ -2859,6 +2914,13 @@ You should be able to explain:
 -   Why an inner join, not an outer join, was used for `Feedback` in the new `/results` query, and what "the read path shouldn't quietly paper over broken data" means in practice
 -   Why `RankResponse`/`ResultsResponse`'s shape was changed directly rather than gated behind an opt-in `?include_feedback=true` parameter
 -   Why `CandidateAssessment` lives in `app/backend/api/schemas.py` rather than `src/ranking.py` or `src/feedback/generator.py`, and what coupling that avoids between two currently-independent modules
+-   Why the frontend consumes `/rank`'s response as raw JSON instead of importing `RankedCandidate`/`CandidateAssessment` directly, and how that traces back to Section 11's very first Accepted decision
+-   Why `app/frontend/api_client.py` was proposed and then deliberately not built, and what distinguishes "premature abstraction" from "the right abstraction, just early"
+-   Why Upload and Rank are two separate user actions instead of one combined button, and what "uploading is persistent, ranking is repeatable" means for retry cost
+-   Why `final_score` is rendered via `st.metric` outside a collapsed `Details` expander rather than at equal visual weight with the four component scores
+-   Why a bare `st.spinner()` during the cold-start `/rank` call was considered insufficient, and what a user would likely conclude without the added caption
+-   Why `streamlit_app.py`'s UI code lives behind `render()` + `if __name__ == "__main__":` instead of at module top level, and what it enables that bare top-level code wouldn't
+-   Why `AppTest` widget-level testing was deliberately deferred for this milestone despite being available, and what would change that decision
 
 ------------------------------------------------------------------------
 
@@ -3083,3 +3145,12 @@ Completed (Session 23)
 - PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Sessions 18–22's still-uncommitted work, initially left uncommitted pending user confirmation, per the recurring commit-discretion rule.
 
 **Post-session update:** the user subsequently committed Sessions 18–23's combined work as a single commit on `feature/scoring-persistence-and-feedback`, opened PR #6, and merged it to `main` (`4d2d068`). Verified directly: `main` matches `origin/main`, working tree clean, full fast test suite (189 tests) re-run and passing on the merged `main`. No uncommitted work remains — see the Git Note in Section 1 for the full account. This closes out Session 23 cleanly for a fresh session to continue from (Section 17).
+
+Completed (Session 24)
+
+- Drafted a sixth plan document, the first under Session 19's workflow that is UI/UX-shaped rather than backend-architecture-shaped: wiring the Streamlit frontend to the real backend API. Read the actual scaffold/config files before designing (not assumed) — found no `title` input despite `/upload-job` requiring one, confirmed `backend`/`frontend` run as genuinely separate Docker containers, confirmed `httpx` already a dependency and `requests` was not.
+- ChatGPT's review (9.2/10) agreed without change on the frontend-as-HTTP-client boundary (called the single most important decision in the plan), `httpx` over `requests`, `BACKEND_URL` config, partial-upload-failure handling, and raw-JSON consumption with no shared backend types. Its one substantive disagreement — a proposed `api_client.py` wrapping three near-trivial calls — was accepted and reversed the plan as premature abstraction, directly re-applying the project's own "don't abstract until there's a second real reason" precedent. Also adopted: splitting Upload and Rank into two separate user actions, making `final_score` visually prominent via `st.metric`, and strengthening cold-start messaging beyond a bare spinner.
+- Implemented `app/frontend/config.py` (`BACKEND_URL`), rewrote `app/frontend/streamlit_app.py` (title input, two-step Upload/Rank flow, inline `httpx` calls with an `APIError` exception, per-file upload failure handling, `st.session_state`, per-candidate cards with a prominent final score and a `Details` expander), added one `BACKEND_URL` line to `docker-compose.yml`. Structured the UI behind `render()` + `if __name__ == "__main__":` so the HTTP-call functions are unit-testable via plain import without executing the whole page script.
+- Added 6 new tests (`tests/test_frontend_api_calls.py`, `httpx.MockTransport`, no live server) — 210 total: 195 fast, 15 slow, all passing. `AppTest` widget-level testing deliberately deferred (logged as a watch item, Section 16) — this project's frontend has almost no interactive logic yet beyond forms and rendering.
+- Manually verified end-to-end against a real `uvicorn` backend + real `streamlit run` frontend in an actual browser session: typed a title, uploaded a real JD PDF and resume PDF through the real file-picker widgets (injected as genuine `File`/`DataTransfer` objects), clicked Upload, clicked Rank, confirmed via the live backend log that a genuine cold model-load happened (not assumed from timing), and confirmed the rendered candidate card matched expectations exactly — prominent `final_score`, correct component scores, correct recommendation/strengths/weaknesses text, and a correctly *absent* "Missing skills" section reflecting the real `None` state. Separately verified partial-upload-failure handling live with a genuinely corrupt PDF mixed into a batch. Cleaned up scratch PDFs and logs afterward.
+- PROJECT_BIBLE synced with repository (version, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work left uncommitted pending user confirmation, per the recurring commit-discretion rule.
