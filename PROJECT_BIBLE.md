@@ -19,7 +19,7 @@
 - ML Engineer
 - GenAI Engineer
 
-**Current Version:** v0.13.0
+**Current Version:** v0.19.0
 
 **Current Status:** Active Development
 
@@ -27,33 +27,39 @@ Current Milestone:
 Resume Intelligence Engine (In Progress)
 
 Latest Completed Milestone:
-Skill matching — `/rank` now exposes a second real signal (`skill_score`) alongside `semantic_score`; `Scorer`'s weighted blend still deferred (experience/education remain unreal)
+Feedback exposed via the API — `POST /rank` and `GET /results` now
+both return a `CandidateAssessment` per candidate (`ranking` +
+`feedback`, composed at the API layer, not bolted onto
+`RankedCandidate`). `GET /download`'s CSV is deliberately untouched.
+Fifth consecutive plan-then-cross-review milestone; the first to
+directly and successfully address every concern the immediately
+preceding review raised, with no new disagreements — see Section 11.
 
-**Overall Progress:** ~71%
+**Overall Progress:** ~85%
 
-Caveat on that number (updated Session 16, first written Session 8):
-~71% reflects real, composed, end-to-end functionality: both ingestion
-sides persist real rows, and `POST /rank` genuinely ranks every
-persisted resume against a job using two real signals — semantic
-similarity and skill overlap — both verified against real data
-(Section 14). It does **not** mean 71% of the working product
-described in the Vision below exists: ranking is still missing
-experience/education scoring, `Scorer`'s weighted blend stays unwired,
-nothing is persisted to `Score`, `/results`/`/download` remain stubs,
-feedback generation doesn't exist, and the actual frontend is still
-scaffold. See Section 12 (Module Status) and Section 18 (Known
-Technical Debt) for the honest breakdown.
+Caveat on that number (updated Session 23, first written Session 8):
+~85% reflects real, composed, end-to-end functionality: both ingestion
+sides persist real rows, `POST /rank` genuinely ranks, scores, and
+explains every persisted resume against a job and now returns that
+explanation, `GET /results` genuinely retrieves the same ranking +
+explanation later, `GET /download` genuinely exports the ranking as
+CSV — all verified against real data (Section 14), including
+confirming `/rank` and `/results`' JSON responses are identical for
+the same job. It does **not** mean 85% of the working product
+described in the Vision below exists: the actual frontend is still
+scaffold — that is the one gap left. See Section 12 (Module Status)
+and Section 18 (Known Technical Debt) for the honest breakdown.
 
-Git Note (updated Session 17, first written Session 8): all work
-through Session 16 (`POST /rank` + skill matching, bundled into one
-PR since both were uncommitted together) was committed and pushed —
-PR #5, merged to `main` as `dc02722`. That is the last commit on
-`main`, and it matches `origin/main`. Working tree is clean. Verified
-directly via `git log`/`git status`, not assumed from a prior note. If
-a new session finds uncommitted work in the working tree, confirm
-with the user whether to commit before doing further work — recurring
-every session because commits happen at the user's discretion, not
-automatically.
+Git Note (updated Session 23, first written Session 8): Sessions 18
+through 23's work (experience/education scoring; `Scorer` blend +
+`Score` persistence; `GET /results`; `GET /download` + `Export`
+module; Feedback generation; Feedback API exposure) are all **not yet
+committed** as of this note, per the user's explicit choice at the end
+of Session 18 to leave work uncommitted across sessions — ask the user
+before committing, per the recurring rule that commits happen at the
+user's discretion, not automatically. The last real commit on `main`
+remains `dc02722` (PR #5, confirmed via `git log` at the start of
+Session 18).
 
 (The previously-noted stray `extract` file was resolved and deleted
 with the user's explicit permission in an earlier session; no longer
@@ -281,6 +287,7 @@ pytest
     database/
     models/
     utils/
+    export/
 
     tests/
     data/
@@ -306,6 +313,8 @@ Scorer - Weighted scoring; also owns document-to-document comparison (e.g. `comp
 Feedback - Human-readable explanations
 
 Database - Persistence
+
+Export - Format already-persisted ranking data for download (currently: `RankedCandidate` list → CSV text, `src/export/csv_exporter.py`) — pure formatting, no FastAPI/SQLAlchemy dependency, no awareness of what its caller's `extra_columns` mean (Session 21; see Section 11). The one architecture-diagram stage (Section 4) that had no module and no responsibility line at all until Session 21.
 
 Backend - APIs only
 
@@ -496,6 +505,29 @@ Reason
 
 A single field, unlike `ResumeEntry`'s three — still wrapped in a dataclass rather than passed around as a bare tuple, for consistency with this project's established "every extraction concept returns a typed domain object" convention (`CandidateName` set this precedent for a single-field case). Case-insensitively deduplicated at extraction time so a skill listed twice doesn't distort downstream matching ratios (see `compute_skill_score()`, `src/scorer/skill_matcher.py`).
 
+---
+
+## GeneratedFeedback
+
+Purpose
+
+Human-readable explanation of one candidate's match against one job — the output of `generate_feedback()` (`src/feedback/generator.py`).
+
+Fields
+
+- strengths (list[str])
+- weaknesses (list[str])
+- missing_skills (list[str] | None)
+- recommendation (str)
+
+Produces
+
+Feedback generation (`src/feedback/generator.py`)
+
+Reason
+
+Named `GeneratedFeedback`, not `Feedback`, specifically to avoid colliding with `src/database/models.py`'s `Feedback` (the persistence model) — the two coexist wherever both are imported (e.g. the route). Matches this project's existing "output of a process" naming pattern (`RankedCandidate`, `ParsedResume`, `StructuredResume`, `SectionedResume`) rather than a plain noun, which the DB model already claims. `missing_skills` is `None`, not `[]`, whenever it hasn't been computed (currently: always) — an empty list would assert "checked, found nothing missing," which this project has no real basis to claim (see Section 11).
+
 All domain models are immutable (`frozen=True`) value objects.
 
 ------------------------------------------------------------------------
@@ -507,8 +539,14 @@ Current SQLAlchemy tables
 -   Job
 -   Resume
 -   Candidate
--   Score
--   Feedback
+-   Score (Session 19: `UniqueConstraint(job_id, resume_id)` added — a
+    data-integrity invariant, not a business rule; see Section 11)
+-   Feedback (Session 22: `score_id` made `unique=True` — same
+    data-integrity reasoning as `Score`'s constraint; `missing_skills`
+    made `nullable=True` so a genuine "not computed" state can be
+    stored rather than coerced into an empty string; `strengths`/
+    `weaknesses` are newline-joined text in their plain `String`
+    columns — see Section 11)
 -   Upload
 
 Purpose:
@@ -1318,6 +1356,325 @@ Status: Accepted.
 
 ------------------------------------------------------------------------
 
+### Experience/education scoring: hand-traced first, design forked by what the data actually contains
+
+Reason: before designing, hand-traced `ResumeEntry.dates` for both
+EDUCATION and EXPERIENCE against the real sample resume, per Section
+17's own instruction to do this before committing to an approach. The
+result reshaped the design: EDUCATION has three real, parseable dates
+("Sep 2023 – 2027", "February 2022", "February 2020"), but EXPERIENCE
+has **zero** standalone date lines anywhere — not even inline within
+bullets. A single "duration/recency from `ResumeEntry.dates`"
+heuristic, as Section 17 originally framed it, would be unusable for
+experience on the only real resume available to validate against.
+
+Chosen design forks the two signals by what's actually extractable:
+
+- **Experience** (`src/scorer/experience_matcher.py`,
+  `compute_experience_score()`): duration-based. Sums a parsed
+  start–end year range per EXPERIENCE entry (a single date, e.g. a
+  completion date, contributes 0 — no end point to measure against);
+  compares the total against a "N years"/"N+ years" pattern found by
+  searching the JD text directly (same sidestep as skill matching
+  below — no independent JD structure extraction). Honestly returns
+  0.0 when no comparable data exists on either side, never fabricates.
+- **Education** (`src/scorer/education_matcher.py`,
+  `compute_education_score()`): degree-level-based, not
+  duration-based. A small curated level table (diploma < bachelor's <
+  master's < PhD) is searched for in both the candidate's EDUCATION
+  entry text and the JD text directly; score is 1.0 if the candidate
+  meets/exceeds the required level, a partial ratio otherwise. Chosen
+  over duration/recency because a JD's education requirement is
+  realistically phrased as a level ("Bachelor's degree required"), not
+  a graduation date range — and level is exactly what the real
+  resume's EDUCATION section reliably contains, unlike EXPERIENCE.
+
+Both new functions mirror `compute_skill_score()`'s established shape
+exactly: resume side uses already-extracted structured data
+(`ResumeEntry` tuples via new `build_resume_education()`/
+`build_resume_experience()` pipeline helpers, mirroring
+`build_resume_skills()`); JD side is a direct text search rather than
+an independent JD parser (same "no real JD corpus to validate a
+heuristic against" constraint noted at every prior JD-side decision);
+never raises; returns a bounded `[0.0, 1.0]` float; 0.0 is the honest
+default whenever either side has no comparable data, not a special
+sentinel.
+
+Degree-level keyword table deliberately excludes bare two-letter
+abbreviations with no required punctuation ("BE", "ME", "BA", "MS", "MA")
+— empirically, "be" and "me" collide with common English words ("will
+be considered", "contact me") even under `\b` word-boundary anchoring,
+since those really are standalone dictionary words (verified with a
+regression test, mirroring the project's existing "verify boundary
+matching empirically" precedent from skill matching). "B.E."/"M.E."
+require both literal dots to disambiguate.
+
+Wired into `/rank` (`src/ranking.py`) as two more independent
+`RankedCandidate` fields (`experience_score`, `education_score`),
+alongside `semantic_score`/`skill_score` — not blended via
+`src/scorer/weighted_scorer.py`. All four `ScoreComponents` signals
+are now real, but wiring the weighted blend and persisting `Score`
+rows is a separate decision (choosing weights, deciding whether
+`/rank` should expose an aggregate at all) explicitly deferred to a
+following session, not bundled into this one — see Section 17.
+
+Manually verified against a live `uvicorn` server with the real
+sample resume and a synthetic unrelated (pastry chef) resume, ranked
+against a crafted JD stating "2+ years of experience" and "Bachelor
+degree ... required": Manish's real resume scored `education_score:
+1.0` (his in-progress B.Tech correctly meets the Bachelor requirement)
+and `experience_score: 0.0` — correctly, honestly reflecting that his
+EXPERIENCE section contains no parseable dates at all, exactly the
+real limitation surfaced during hand-tracing, not a bug. The chef
+resume scored `0.0`/`0.0` on both (no EDUCATION section, no dates).
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `Scorer` weighted blend wired + `Score` persistence — planned and cross-reviewed with ChatGPT before implementation
+
+Reason: this milestone was the first drafted as a standalone plan
+document and sent for ChatGPT review *before* any code was written —
+a new, now-standing workflow (the user's explicit instruction: draft
+a plan, get a second opinion, then implement). ChatGPT agreed with
+the great majority of the plan and pushed back on two points, both
+adopted:
+
+- **`UniqueConstraint(job_id, resume_id)` on `Score`, in addition to
+  the already-planned application-level upsert.** The original plan
+  proposed app-level upsert only, reasoning (by analogy to the
+  already-accepted "`Candidate` rows aren't deduplicated" decision)
+  that this project doesn't use DB constraints for business rules.
+  ChatGPT correctly distinguished the two cases: `Candidate` dedup is
+  a genuine business-rule ambiguity (is one email one person? — a
+  product decision with no single correct answer); `(job_id,
+  resume_id)` uniqueness on `Score` is a data-integrity invariant — "
+  the current score for this resume against this job" is
+  definitionally singular, and a duplicate row represents an
+  impossible state, exactly what relational constraints exist to
+  prevent. Adopted: both layers — app-level upsert handles the normal
+  path, the DB constraint is a backstop against a bug in that path
+  (not an expected trigger, so no special error handling was added
+  around it in the route). Required deleting/recreating the local
+  `data/app.db` once (dev-only, gitignored — no migration tooling
+  exists, same situation every prior schema change has been in).
+- **`semantic_score`'s `[-1, 1]` range vs. the other three signals'
+  `[0, 1]` range, blended by `compute_score()` without normalization,
+  reclassified from "accepted limitation" to architectural debt.**
+  ChatGPT's distinction: an accepted limitation is something
+  comfortable to leave indefinitely; architectural debt is something
+  knowingly deferred because current evidence doesn't yet justify a
+  redesign, to be revisited if evidence changes. In every real
+  measurement so far (Sessions 15/16/18/19), MiniLM cosine
+  similarities for real resume/JD text have landed as small positive
+  fractions (~0.13–0.19), so this hasn't produced a nonsensical
+  `final_score` in practice — but that's empirical behavior, not a
+  guarantee; a legitimately negative `semantic_score` would swing
+  `final_score` in a way no other signal can. Not fixed this
+  milestone (no redesign without evidence it's needed), but logged as
+  debt, not quietly accepted — see Section 18. ChatGPT also raised an
+  unresolved question worth recording: is `semantic_score` meant to
+  be raw cosine similarity, or a normalized ranking signal? Those
+  imply different fixes; not decided here.
+
+Other decisions from the plan, confirmed rather than contested:
+
+- `final_score` is computed inside `rank_resumes_against_job()`
+  (`src/ranking.py`), not in the route — the natural completion of
+  the function that already assembles every other signal, not a
+  separate responsibility.
+- `/rank`'s sort key switched from `semantic_score` to `final_score`
+  — the interim "no legitimate composite exists yet" constraint that
+  justified `semantic_score`-only sorting since Session 15 no longer
+  applies once a real composite does.
+- `rank_resumes_against_job()` stays DB-session-free (pure — takes
+  already-fetched rows, never queries, never writes); persistence
+  happens in the `/rank` route, which already holds a `db: Session`.
+  Mirrors the existing precedent that `/upload-resume` does its own
+  `Candidate`/`Resume` persistence inline in its route rather than
+  inside `process_resume()`.
+- `Score` is derived/cached data, not authoritative business data —
+  acknowledged explicitly (per ChatGPT) rather than left implicit.
+  This milestone's upsert design already answers the one lifecycle
+  question in scope: a `Score` row is fully recomputed and
+  overwritten on every `/rank` call for that `(job, resume)` pair, so
+  it's accurate "as of the last `/rank` call," never merged with a
+  stale prior value. Whether a future `/results` should trust
+  persisted rows as-is or trigger a live recompute is **not** decided
+  here — left as an open question for whichever session builds
+  `/results` (Section 17).
+- A `computed_at` timestamp on `Score` (suggested by ChatGPT as future
+  groundwork for the staleness question above) was **not** added this
+  milestone — no immediate need forces it yet, consistent with this
+  project's "don't add fields before there's a concrete need"
+  discipline (the same discipline that caught the unused `status`/
+  `errors` fields on `ParsedResume` in Session 3). Logged as a TODO,
+  not silently dropped (Section 16).
+- `DEFAULT_WEIGHTS` (`semantic 0.5 / skills 0.3 / experience 0.1 /
+  education 0.1`) kept unchanged — no evidence-based reason to
+  reweight found; sanity-checked against real data instead (see
+  verification below), not redesigned.
+
+Manually verified against a live `uvicorn` server with the real
+sample resume and the synthetic pastry-chef resume, ranked against the
+same electronics JD used in Session 18's verification: `final_score`
+matched hand-computed `compute_score()` output exactly for both
+candidates (Manish: `0.169` = `0.138*0.5 + 0*0.3 + 0*0.1 + 1.0*0.1`;
+Mary: `0.068` = `0.136*0.5`). Called `/rank` twice in a row and
+queried the real SQLite `scores` table directly: exactly 2 rows
+existed after both calls (one per resume), with the same row `id`s
+before and after the second call — proving the upsert updates in
+place rather than duplicating, not just asserting it does.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `GET /results`: read persisted `Score` rows, never recompute — second plan-then-cross-review milestone
+
+Reason: this was the second milestone drafted as a standalone plan
+document and sent for ChatGPT review before implementation, following
+Session 19's newly-established workflow. Unlike Session 19's plan,
+ChatGPT agreed with every recommendation in the draft as written —
+all four explicit questions came back "yes, as proposed," with no
+design changes required before implementation. Recorded here anyway,
+not skipped, since the review still confirmed real judgment calls
+rather than rubber-stamping an unreviewed guess:
+
+- `/results` queries `Score` (joined to `Resume`/`Candidate`) filtered
+  by `job_id`, ordered by `final_score` descending — it never calls
+  `rank_resumes_against_job()`. This resolves the lifecycle question
+  Session 19 explicitly deferred (Section 11's "`Score` is derived
+  data" note): `/rank` already keeps `Score` fresh via upsert on every
+  call, so reading persisted rows directly is the natural fit, and it
+  keeps `/results` a cheap, idempotent `GET` rather than one that
+  silently triggers expensive embedding-model inference. ChatGPT's
+  framing: "`/rank` computes and persists. `/results` reads persisted
+  state. No recomputation occurs during reads."
+- `job_id` not found → `404` (mirrors `/rank`). `job_id` found but zero
+  `Score` rows (never ranked) → `200`/`candidates: []` — "That
+  accurately represents reality. The ranking simply hasn't been
+  computed yet. It is not an error" (ChatGPT). Deliberately not
+  auto-triggering a `/rank` computation as a side effect of a `GET`.
+- Reused `RankedCandidate` (`src/ranking.py`) directly for
+  `/results`' response items, the same way `RankResponse` already
+  does for `/rank` — the payload shape is identical, and introducing
+  a second type "solely because the data originated from the database
+  instead of fresh computation would introduce duplication without
+  any behavioral benefit" (ChatGPT). The freshness distinction (a
+  `/results` value may be a few `/rank` calls old; a `/rank` value is
+  always fresh at request time) is documented in `ResultsResponse`'s
+  docstring rather than encoded as a second type, consistent with
+  Session 19's "accepted limitation vs. architectural debt" framing —
+  there's no behavioral difference yet to justify a type-level split.
+- No pagination added — no evidence of a resume-count scale that
+  would need it, same reasoning `/rank` was already built without it.
+- The `Score`→`Candidate` join query and field mapping stayed inline
+  in the route handler rather than factored into a helper — one
+  caller, straightforward mapping, mirrors `/rank`'s own inline
+  persistence logic (Session 19). "There is only one caller, and the
+  query is simple enough that extracting it would not improve
+  readability" (ChatGPT).
+- A `Resume` with no `Score` row for the requested job (never
+  included in any `/rank` call for it) is silently omitted from
+  `/results` — not returned with a null or zero placeholder score.
+  "A missing `Score` row means: no ranking has been computed. It does
+  **not** mean: this candidate scored zero. Those should remain
+  distinct" (ChatGPT). Same "never fabricate data" precedent this
+  project has applied at every prior decision point, here applied to
+  a read path instead of a write path.
+
+One idea ChatGPT raised but explicitly did not propose for this
+milestone: `/results` currently can't distinguish "this job was never
+ranked" from "this job was ranked and zero candidates matched" — both
+produce an identical `200`/`candidates: []`. ChatGPT's suggested
+future direction is a `last_ranked_at`-style timestamp on `Score`
+rather than a second response type or shape — this reinforces (does
+not add to) the `computed_at` TODO already logged in Session 19
+(Section 16). Not implemented now; no concrete need forces it yet.
+
+ChatGPT also independently connected this milestone to the deferred
+`/download` route: "`/download` should be exporting persisted ranking
+results rather than invoking ranking logic again" — i.e. `/download`
+should likely consume the same persisted-`Score`-read pattern
+established here, not its own recomputation path. Not decided or
+acted on this milestone; noted for whichever session builds
+`/download` (Section 17).
+
+Manually verified against a live `uvicorn` server with real data
+(same real sample resume + chef resume + electronics JD used in every
+prior verification): `GET /results` before any `/rank` call correctly
+returned `200`/`{"job_id":1,"candidates":[]}` for a valid job;
+`GET /results?job_id=999` correctly returned `404`; after calling
+`/rank`, `GET /results`' response was byte-for-byte identical to what
+`/rank` had just returned — checked directly, not just asserted equal
+in a unit test.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### `GET /download`: third plan-then-cross-review milestone, closes the architecture diagram's last unbuilt stage
+
+Reason: the third milestone drafted as a standalone plan and cross-reviewed with ChatGPT before implementation. Like Session 20, ChatGPT agreed with every core recommendation, and made one refinement that was adopted:
+
+- **Shared read helper, extracted now that there's a genuine second caller.** `/results`' query (Session 20) was deliberately kept inline, reasoned as correct only because it had exactly one caller. `/download` needs the identical read. Extracted `_ranked_candidates_for_job(db, job) -> list[RankedCandidate]` as a private helper in `app/backend/api/routes.py`, used by both routes — the same "extract once a second consumer exists, not before" precedent already applied to `_reconstruct_sections()` (Session 16). Kept at the route level, not in `src/ranking.py`: this is a DB query + ORM mapping, not business logic, and `src/ranking.py` deliberately stays DB-session-free (Session 19).
+- **A minimal `Export` module created now**, diverging from the "keep it inline until proven otherwise" pattern every prior route-level decision has followed. Justification: CSV formatting is a pure transformation with no FastAPI/SQLAlchemy dependency at all (unlike `/rank`'s persistence or `/results`'s query, both genuinely "Backend"/"Database" concerns per Section 7) — and Export is the one stage named in the Section 4 architecture diagram since the project's scaffold that had never been built at all, with no line in Section 7's Module Responsibilities table until now. ChatGPT's framing: "This is one of the few places where introducing a new module actually reduces coupling rather than increasing abstraction." `src/export/csv_exporter.py` stays intentionally minimal — one function, no format-plugin system, sized to the one real need (CSV).
+- **CSV only, stdlib `csv` module, no new dependency** — `pandas` is listed in `requirements.txt` but has never been imported anywhere in the codebase; not reached for here either, since stdlib `csv.DictWriter` is fully sufficient for a flat-row export. Same "no dependency before a concrete need forces it" discipline already applied to OCR, `phonenumbers`, and every alias-dictionary decision.
+- **`fmt: Literal["csv"] = "csv"`, not a manually-checked `str`** — an invalid `fmt` value becomes an automatic FastAPI/Pydantic `422`, matching this project's own established precedent for exactly this category of error ("`PDFParseError` maps to HTTP 422, not 400," Section 11: "a syntactically valid request whose payload is semantically bad... FastAPI already uses 422 for its own... validation errors").
+- **`/download` never recomputes** — same "`POST /rank` computes and persists; `GET` routes only read" split `/results` established (Session 20). Verified live: calling `/download` triggers no embedding-model inference.
+- **Job not found → `404`; found but never ranked → `200` with a header-only CSV** — mirrors `/results` exactly, no new semantics invented for this route.
+- **`extra_columns: dict[str, object] | None` on the exporter, not a `job_id: int` parameter.** ChatGPT's one adopted refinement: "the exporter's responsibility is formatting rows. It doesn't really care what those rows represent... today it's `job_id`... keeping the exporter generic makes it reusable without making it more complicated." Signature became `export_ranked_candidates_to_csv(candidates, extra_columns=None)`, with the route injecting `{"job_id": job.id}` — cheap to design correctly at the module's inception (this is its first implementation) rather than break the signature later if a second export need appears (e.g. once Feedback exists). Same "second consumer" reasoning as the read-helper extraction, applied prospectively this time instead of retroactively.
+
+ChatGPT flagged one thing explicitly as future-only, not this milestone: once `Feedback` exists, a hypothetical `?include_feedback=true` might want candidate + scores + feedback all in one export — the exporter's genericness (via `extra_columns`) leaves room for that without committing to it now.
+
+Manually verified against a live `uvicorn` server with real data: `GET /download` before any `/rank` call correctly returned a `200` with a header-only CSV for a valid job; `GET /download?fmt=xlsx` correctly returned `422`; after calling `/rank`, the downloaded CSV's data rows matched `/rank`'s own JSON response field-for-field, including the injected `job_id` column.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Feedback generation: fourth plan-then-cross-review milestone — the first with substantial, not incremental, pushback
+
+Reason: the fourth milestone drafted as a standalone plan and cross-reviewed with ChatGPT before implementation. Unlike Sessions 20/21 (near-total agreement, one refinement each), this review rated the draft 8.8–9.0 (down from 9.7+/9.8/9.9) and raised five substantive architectural concerns, closing with a direct challenge worth quoting rather than summarizing: *"Claude is beginning to optimize for completing the architecture diagram... rather than asking what is the smallest coherent feature we can ship."* That observation is accurate about how the original draft framed several decisions, and reshaped the milestone materially:
+
+- **Extending the scorer modules to expose intermediate "why" detail (`matched_skills()`, `describe_education_match()`, `describe_experience_match()`), refactoring `compute_*_score()` to use them — ChatGPT agreed fully, called it "probably the best design decision in the proposal."** Both `compute_skill_score()` (used for ranking) and `generate_feedback()` (used for explanation) now depend on the same source of truth per signal, rather than two independently-maintained matching implementations — the same "pipeline divergence" risk this project has hit and fixed before (`_reconstruct_sections()`, Session 16; the shared `/results`/`/download` query helper, Session 21). Verified as a pure refactor: the full existing `compute_skill_score()`/`compute_education_score()`/`compute_experience_score()` test suites (31 tests) passed unchanged after the refactor, not just assumed safe.
+- **`missing_skills: list[str] | None`, not `list[str] = []`.** ChatGPT's distinction, adopted: an empty list asserts "checked, found nothing missing" — a claim this project has no basis to make without independent JD-skill extraction (the same wall that has blocked JD title extraction, JD section detection, and skill matching's own "missing skills" gap since Session 16). `None` honestly represents "not computed." `Feedback.missing_skills` (DB) became `nullable=True` to actually store that state.
+- **`recommendation` is not rank-position text.** The original draft proposed `"Ranked #1 of 2 candidates"`, motivated by a real, hand-traced finding (the scaffold's `>= 0.75`/`>= 0.5` thresholds would label *both* real candidates ever tested — Manish at `0.169`, the chef resume at `0.068` — "Weak match," including the genuinely relevant one). ChatGPT identified a concrete flaw in the replacement, not just a style objection: rank position discards score *magnitude* — `0.18` vs `0.17` and `0.72` vs `0.25` both read as `"#1"`/`"#2"` in a two-candidate pool. Resolved differently: `recommendation` became a plain-language sentence *composed from* the same facts already derived for `strengths`/`weaknesses` (education match, experience match, skill matches) — not a new, separately-calibrated signal at all, so it can't claim more confidence than the underlying facts already support.
+- **`generate_feedback()` became pairwise** (`resume_skills, education_entries, experience_entries, job_description -> GeneratedFeedback`), mirroring `compute_*_score()`'s own shape — a direct consequence of dropping rank-based `recommendation`: nothing about one candidate's feedback ever actually depended on any other candidate's data or the sorted `ranked` list. Simpler than the original draft's design, not just smaller.
+- **`RankedCandidate` was not touched — ChatGPT's biggest concern.** The original draft proposed adding a `feedback` field directly to `RankedCandidate`, which currently represents pure quantitative ranking output. ChatGPT: "conflating 'quantitative ranking output' with 'explanation'... every future API that only needs ranking data inherits feedback as well." Adopted: `Feedback` rows are generated and persisted this milestone and nothing else touches `RankedCandidate`, `RankResponse`, `ResultsResponse`, or `GET /download`'s CSV.
+- **API exposure was cut from this milestone entirely, not deferred-in-name.** ChatGPT, independently of the `RankedCandidate` concern: "generation + persistence is one milestone. Changing public API contracts is another... If I were reviewing this as a production PR, I'd probably ask for those to be split." Designing how feedback should actually be exposed (a wrapper type pairing ranking + feedback? a separate endpoint?) is real design work with its own review, deferred to a session with a concrete consumer (e.g. the frontend) driving the shape — see Section 17.
+- **The domain dataclass was renamed `GeneratedFeedback`, not aliased on import.** The original draft's plan for handling two classes both named `Feedback` (the scaffold dataclass and the DB model) was import aliasing. ChatGPT: "I'd actually rename one of them... I'd solve the naming problem rather than work around it." `GeneratedFeedback` matches this project's existing "output of a process" naming pattern (`RankedCandidate`, `ParsedResume`, `StructuredResume`, `SectionedResume`); the DB model keeps `Feedback`, consistent with every other DB model's plain-noun naming.
+
+Persistence mirrors `Score`'s upsert pattern exactly: query-then-update-or-insert per `score_id`, inside `/rank`'s existing per-candidate loop (not a second pass — pairwise feedback needs no rank position, so it can run in the same iteration as `Score`'s upsert). `Feedback.score_id` gained `unique=True`, same reasoning as `Score`'s `UniqueConstraint` (Session 19): "the current feedback for this score" is definitionally singular, a data-integrity invariant. `resume_skills`/`resume_education`/`resume_experience` get rebuilt a second time in the route for feedback (already built once inside `rank_resumes_against_job()` for scoring) — an accepted, named tradeoff, cheap regex/text work, not a model call; ChatGPT confirmed no concern with this both before and after the call site moved from "a second pass" to "inline in the existing loop."
+
+Manually verified against a live `uvicorn` server with real data: the real sample resume's persisted feedback correctly read *"Meets the stated education requirement. Experience duration could not be verified from the available data."* — honest about the real EXPERIENCE data gap (Session 18) rather than claiming "insufficient experience," `missing_skills` correctly `NULL` in the real DB row, not an empty string. The chef resume's feedback correctly flagged "No recognized degree found" (no EDUCATION section at all) alongside the same experience-data-gap wording. Called `/rank` twice and confirmed via direct `sqlite3` query that exactly one `Feedback` row per `Score` existed after both calls (same `id`s), and that `/rank`'s JSON response fields were completely unchanged (no `feedback` key present) — confirming the API-exposure cut was real, not just documented.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
+### Feedback API exposure: fifth plan-then-cross-review milestone — the first to fully resolve the previous review's concerns with none left open
+
+Reason: the fifth milestone drafted as a standalone plan and cross-reviewed with ChatGPT before implementation, scoped narrowly to exactly what Session 22 deferred: how `GeneratedFeedback` becomes visible through the API, nothing else. ChatGPT rated it 9.4–9.6 (up from 8.8–9.0), with every substantive point either full agreement or a forward-looking watch item, not a design change:
+
+- **`CandidateAssessment` (`ranking: RankedCandidate`, `feedback: GeneratedFeedback`), composed at the API layer in `app/backend/api/schemas.py`, confirmed rather than re-litigated.** This directly answers Session 22's biggest concern (feedback bolted onto `RankedCandidate`). While surveying what exists before designing further, found a concrete instance of exactly the risk ChatGPT had described in the abstract: `_ranked_candidates_for_job()` is shared by `/results` *and* `/download`, and `csv_exporter.py` builds CSV columns via `dataclasses.fields(RankedCandidate)` introspection — a `feedback` field added there would have broken or ugly-fied `/download`'s CSV, a consumer that never asked for it. ChatGPT: "This fixes what I considered the biggest issue in Session 22."
+- **A real, verified bug caught before implementation, not after.** Checked directly (not assumed) how `"".split("\n")` behaves: it returns `['']`, not `[]`. This wasn't a synthetic edge case — Session 22's own live verification had already produced exactly this row in real, currently-persisted data (the chef resume's empty `Feedback.strengths` column). A naive deserializer would have reintroduced the "empty list vs. list containing one empty string" confusion this project explicitly designed `missing_skills: None` to avoid, one field over. Fixed with a small `_split_or_empty()` helper before any reader existed. ChatGPT: "This is exactly the sort of subtle bug that usually survives into production. Finding this before writing the reader is good engineering."
+- **`/download`'s CSV stayed untouched, on purpose.** Not because feedback isn't wanted there, but because `strengths`/`weaknesses` are `list[str]` with no chosen CSV serialization format (a separate, already-logged gap) — deciding that here would have been exactly the scope creep Session 22's review warned about. ChatGPT: "It's not simply because feedback isn't needed. It's because CSV serialization of nested lists is a separate design problem. That is exactly the kind of scope discipline I like seeing."
+- **Query duplication between `_ranked_candidates_for_job()` and the new `_candidate_assessments_for_job()` — accepted, but logged as a watch item, not solved speculatively.** ChatGPT's one remaining concern: two similar `Score`⋈...⋈`Candidate` joins are fine, but a *third* nearly-identical one (e.g. a future export-with-feedback or dashboard endpoint) should trigger introducing a small shared internal read model (ChatGPT's suggested shape: a `PersistedAssessment` representing the full join, projected down per endpoint) rather than continuing to duplicate joins indefinitely. Not built now — no third consumer exists yet to justify it (Section 16).
+- **`CandidateAssessment` staying in `schemas.py` rather than becoming a `src/` domain type — accepted for now, same "wait for a real second reason" pattern.** ChatGPT: "if another consumer appears — CLI, batch export, frontend adapter — I'd promote it into a shared domain object rather than leaving it API-specific forever." Logged, not acted on (Section 16).
+- **Inner join on `Feedback` (not outer) in the new query — agreed without reservation.** ChatGPT: "Your own database invariant says Score 1:1 Feedback. If that invariant is violated, the bug is elsewhere. The read path shouldn't quietly paper over broken data." No defensive handling added for a case the schema's own `unique=True` constraint (Session 22) already rules out.
+- **Changed `RankResponse`/`ResultsResponse`'s shape directly, no `?include_feedback=true` opt-in flag** — considered (and explicitly named as a real fork, not a formality, since Session 21's cross-review had floated exactly this pattern for CSV export) but rejected: "There is currently no production client. Introducing optional response shapes this early would actually make the API harder to understand. One stable response is preferable" (ChatGPT).
+
+`/rank` needed no new query for this — `feedback_data` (a `GeneratedFeedback`) already existed in memory from the persistence loop; `/results` needed one new query (`_candidate_assessments_for_job()`) since it's a pure read with nothing computed to reuse.
+
+Manually verified against a live `uvicorn` server with real data: `/rank`'s JSON response now correctly nests `ranking`/`feedback` per candidate, with Mary's (the chef resume's) `strengths` correctly showing as `[]`, not `[""]` — the exact bug found during design, confirmed fixed against real data, not just the unit test that targets it. `/rank` and `/results`' full JSON responses for the same job compared programmatically and found identical. `/download`'s CSV confirmed byte-for-byte unchanged from before this milestone.
+
+Status: Accepted.
+
+------------------------------------------------------------------------
+
 # 12. Module Status
 
 | Module | Status |
@@ -1330,14 +1687,14 @@ Status: Accepted.
 | Job Description Ingestion | Live — `POST /upload-job` parses a JD PDF (reusing `extract_text`/`clean_text`, not resume section detection/extraction), persists `Job`/`Upload`, manually verified. Title is user-provided, not extracted (no real JD data exists to validate a heuristic against). |
 | Embeddings | Hardened, verified, and now live — `encode()` is called for real by every `/rank` request via `build_resume_embedding()`/`build_job_embedding()`. `prepare_resume_embedding_text()` (resume-specific text prep) lives in `src/pipeline.py`, not in `src/embeddings/`, which stays domain-agnostic. |
 | Similarity | Live — `cosine_similarity()` is called for real by every `/rank` request, verified against real data (scores in a sane range, correct relative ordering). |
-| Scorer | `compute_skill_score()` is live and real (`src/scorer/skill_matcher.py`), called by every `/rank` request; `compute_score()`'s weighted blend is still unwired — 2 of 4 signals (experience/education) remain uncomputable, and `/rank` continues to expose `semantic_score`/`skill_score` as independent fields rather than a blended total (see Section 11). |
-| Feedback | Scaffold — `generate_feedback()` exists, never called |
-| Database | `Upload`, `Candidate`, `Resume` written by `/upload-resume`; `Upload`, `Job` written by `/upload-job` (both verified against real data); `Score` and `Feedback` remain entirely unpopulated — `/rank` deliberately does not write `Score` rows (see Section 11) |
-| Backend | `POST /upload-resume`, `POST /upload-job`, and `POST /rank` are all live, tested, and manually verified against real data; `/results` and `/download` are still `raise NotImplementedError` stubs (`/results` has nothing persisted to retrieve yet — see Section 11) |
+| Scorer | Fully live and real, end to end — all 4 `ScoreComponents` signals (`compute_skill_score()`, `compute_experience_score()`, `compute_education_score()`, plus `cosine_similarity()`) and now `compute_score()`'s weighted blend (`DEFAULT_WEIGHTS`, unvalidated numbers but sanity-checked against real data) are all called by every `/rank` request. `final_score` is the actual sort key. |
+| Feedback | Fully live, end to end — `generate_feedback()` (`src/feedback/generator.py`) is called by every `/rank` request; `POST /rank` and `GET /results` now both return it (as `CandidateAssessment.feedback`, Session 23), not just persist it. `missing_skills` stays `None` (Section 11) — a real, documented gap, not a fabricated empty answer. |
+| Database | `Upload`, `Candidate`, `Resume` written by `/upload-resume`; `Upload`, `Job` written by `/upload-job`; `Score` and `Feedback` written by `/rank` (both upserted, both backed by real uniqueness constraints — Section 11), all verified against real data. |
+| Backend | All 5 routes named in the Section 4 architecture diagram are live: `POST /upload-resume`, `POST /upload-job`, `POST /rank`, `GET /results`, `GET /download` — every one tested and manually verified against real data. `/rank` and `/results` now return `CandidateAssessment` (`ranking` + `feedback`) per candidate — verified identical between the two live. `/download`'s CSV deliberately unaffected (verified byte-for-byte unchanged). |
 | Frontend | Scaffold — Streamlit UI renders upload widgets and a "Rank" button, but the handler just shows `"Ranking pipeline not implemented yet"`; no `src/` imports, no API calls |
-| Export | **Not started.** No module exists despite being the final step in the Section 4 architecture diagram. |
+| Export | Live — `export_ranked_candidates_to_csv()` (`src/export/csv_exporter.py`) is called by every `GET /download` request. First and only implementation so far (CSV); a pure formatting function, no FastAPI/SQLAlchemy dependency. |
 
-**Honest summary**: resume ingestion, Job Description ingestion, and ranking now all work end-to-end through real, tested, manually-verified HTTP routes (`POST /upload-resume`, `POST /upload-job`, `POST /rank`), and `/rank` now exposes two genuine signals — semantic similarity and skill overlap — both verified on real data, including a real bug (garbage pseudo-skills from an unrecognized "Positions of Responsibility" heading bleeding into SKILLS) found and fixed via that verification, not just assumed correct. What's still missing: experience/education scoring don't exist, so `Scorer`'s weighted blend stays unwired and nothing is persisted to `Score`; `/results`/`/download` remain stubs; feedback generation doesn't exist; the frontend is still scaffold. Three end-to-end user flows are possible (upload a resume; upload a JD; rank all resumes against a JD, now with two real signals instead of one); nothing explains *why* a candidate ranked where they did yet — that's Feedback's job, still unbuilt.
+**Honest summary**: resume ingestion, Job Description ingestion, ranking, results retrieval, CSV export, feedback generation, and now feedback exposure all work end-to-end — every pipeline stage *and* every response in the Section 4 architecture diagram is now live and fully surfaced, for the first time this project. `/rank` computes, persists, and returns a genuine blended `final_score` plus a genuine, honest explanation per candidate; `/results` retrieves the identical pair later; `/download` exports the ranking alone, deliberately. This included a real bug found via verification in Session 16 (garbage pseudo-skills bleeding into SKILLS), a real, honest data limitation surfaced via hand-tracing in Session 18 (the sample resume's EXPERIENCE section has zero parseable dates) that directly shaped Session 22's feedback wording, a real deserialization bug (`"".split("\n") == ['']`) caught during Session 23's design *before* any reader existed to ship it, and five consecutive plan-then-cross-review-then-implement milestones (Sessions 19–23) — Session 22 drew substantial pushback and was scoped down; Session 23 is the first to fully resolve a prior review's concerns with nothing left open. What's still missing: the frontend is still scaffold — that is the one gap left between this backend and the Vision in Section 2. Five end-to-end user flows are possible, and for the first time the explanation isn't just sitting in the database — a caller asking "why did this candidate rank here" gets a real, honest answer back.
 ------------------------------------------------------------------------
 
 # 13. Testing Status
@@ -1386,9 +1743,47 @@ Current
 
 ✅ `/rank` end-to-end integration test extended to assert real `skill_score` values, not just `semantic_score`
 
+✅ `compute_experience_score()` tests passing: exact/exceeds/partial requirement matches, multi-entry summing, `"Present"`-with-injected-`today` handling, no-dates-returns-zero, single-date-not-a-range-returns-zero (mirrors the real sample resume's EDUCATION date shape), no-JD-requirement-returns-zero, reversed-range-never-negative
+
+✅ `compute_education_score()` tests passing: exact/exceeds/partial degree-level matches, the real sample resume's exact "B. Tech" phrasing, no-recognized-degree-returns-zero, no-JD-requirement-returns-zero, case-insensitivity, PhD recognition, and a regression test proving the bare "be"/"me" word-collision false-positive (empirically found during design) does not trigger a match
+
+✅ `rank_resumes_against_job()` extended: real (unfaked) `experience_score`/`education_score` computed end-to-end from a raw-text fixture with real date-anchored sections, plus a zero-signal case when no such sections exist
+
+✅ `/rank` end-to-end integration tests extended: real sample resume's `experience_score`/`education_score` bounds-checked, plus a dedicated real-data case (crafted resume + JD) asserting both scores hit `1.0` when the requirement is genuinely met
+
+✅ `rank_resumes_against_job()` extended: `final_score` proven to equal `compute_score(ScoreComponents(...))` for a known input (not just present); sort order proven to be genuinely `final_score`-driven (not incidentally the same as `semantic_score`-only) via a fixture where the two orderings deliberately disagree
+
+✅ `Score` `UniqueConstraint(job_id, resume_id)` proven with a direct DB-level test — two raw `Score` inserts for the same pair, bypassing the app-level upsert logic entirely, correctly raise `IntegrityError`
+
+✅ `/rank` route tests extended: a real `Score` row is persisted with the expected values (queried directly from the DB, not just asserted from the response); calling `/rank` twice in a row for the same job leaves exactly one `Score` row per resume (upsert proven, not just asserted), not two
+
+✅ `GET /results` route tests passing (new `tests/test_results_route.py`, all fast — no embedding model involved since this route only reads): 404 on nonexistent job, `200`/`[]` on an existing-but-never-ranked job, correct fields and correct `final_score`-descending ordering for persisted `Score` rows (inserted directly via the DB), and a dedicated test proving a `Resume` with no `Score` row for the requested job is silently omitted rather than appearing with a placeholder score
+
+✅ `/rank` → `/results` chaining integration test passing (`pytest -m slow`, extends `test_rank_integration.py`): a real `/rank` call's response and the immediately following `/results` call's response for the same job compared field-for-field, proving `/results` reads genuinely persisted data rather than recomputing or silently drifting; plus a test confirming `/results` returns `200`/`[]` for a real, valid job before any `/rank` call has happened
+
+✅ `export_ranked_candidates_to_csv()` unit tests passing (new `tests/test_csv_exporter.py`): empty list → header-only CSV (parsed back with stdlib `csv.DictReader`, not just eyeballed as a string), known input round-trips correctly, row order preserved, `extra_columns` applied to every row and placed before `RankedCandidate`'s own fields, and `extra_columns=None` produces no extra field at all (not an empty/null column)
+
+✅ `GET /download` route tests passing (new `tests/test_download_route.py`, all fast): 404 on nonexistent job, `422` on an invalid `fmt` (proving `Literal["csv"]` validation actually fires, not just declared), `200` with a header-only CSV for an existing-but-never-ranked job (correct `Content-Type`/`Content-Disposition`), correctly `final_score`-ordered rows for persisted `Score` data, and the same never-ranked-resume-omission behavior already proven for `/results`
+
+✅ `/rank` → `/download` chaining integration test passing (`pytest -m slow`, extends `test_rank_integration.py`): a real `/rank` call's JSON response and the immediately following `/download` call's parsed CSV compared field-for-field (including the injected `job_id` column), plus a test confirming `/download` returns a header-only CSV for a real, valid job before any `/rank` call
+
+✅ `matched_skills()`/`describe_education_match()`/`describe_experience_match()` unit tests passing (extending `test_skill_matcher.py`/`test_education_matcher.py`/`test_experience_matcher.py`): correct matched-skill subsets in original order, `(candidate_level, required_level)` tuples distinguishing "not found" from "found," `(total_years, required_years, any_parseable_dates)` tuples including the real "zero standalone dates" case (Session 18); full pre-existing `compute_skill_score()`/`compute_education_score()`/`compute_experience_score()` suites (31 tests) re-run unchanged after refactoring them to use the new functions — regression proof, not assumption
+
+✅ `generate_feedback()` unit tests passing (new `tests/test_feedback_generator.py`): `missing_skills is None` (not `[]`); education/experience/skill strength and weakness wording for every branch (met, below, not-found, no-requirement-stated); the exact real hand-traced case — the real sample resume against the real electronics JD — asserting the experience weakness text says "date ranges we could parse," never "insufficient"; `GeneratedFeedback` proven frozen/immutable
+
+✅ `Feedback.score_id` `unique=True` proven with a direct DB-level test (new in `test_rank_route.py`, fast) — two raw `Feedback` inserts for the same `score_id`, bypassing the app-level upsert logic entirely, correctly raise `IntegrityError`
+
+✅ `/rank` real-feedback persistence tests passing (`pytest -m slow`, extend `test_rank_integration.py`): a real `Feedback` row queried directly from the DB after a real `/rank` call contains the correct, honest strengths/weaknesses text (not just structurally present); calling `/rank` twice in a row leaves exactly one `Feedback` row per `Score` (upsert proven), not two
+
+✅ `_split_or_empty()`/`_generated_feedback_from_row()` deserialization tests passing (new, in `test_results_route.py`): the exact real-data edge case found during Session 23's design — an empty `strengths` column deserializes to `[]`, not `[""]` — plus non-empty round-trips correctly and a `NULL` `missing_skills` column deserializes to `None`
+
+✅ `/results` route tests extended for the new nested `{ranking, feedback}` shape (fast, DB-only): correct `ranking` fields, correct `feedback` fields including the empty-strengths edge case, `Score`+`Feedback` rows now created together in test fixtures (mirroring the real inner-join invariant `_candidate_assessments_for_job()` relies on), never-ranked-job and never-scored-resume-omission behavior re-verified unchanged
+
+✅ `/rank` integration tests updated for the new nested response shape (`pytest -m slow`): all existing field assertions (`semantic_score`, `skill_score`, `final_score`, etc.) now read through `candidate["ranking"][...]`, plus a new assertion that `feedback.recommendation` is present and non-empty; `/rank` ↔ `/results` full-response equality re-verified with the richer shape (proves feedback round-trips identically through persistence + re-read, not just the scores)
+
 Current Result
 
-129 tests total — 123 / 123 passing by default (`pytest`, ~1.6-1.9 sec); 7 / 7 additional real-model tests passing on demand (`pytest -m slow`, ~17-24 sec)
+204 tests total — 189 / 189 passing by default (`pytest`, ~2 sec); 15 / 15 additional real-model tests passing on demand (`pytest -m slow`, ~21 sec)
 
 ------------------------------------------------------------------------
 
@@ -1494,6 +1889,78 @@ Completed
     `semantic_score: 0.189` correctly reflects the real underlying
     domain relevance. A concrete, real illustration of the documented
     exact-matching limitation (Section 11), not a hypothetical one.
+-   Experience/education scoring manually verified end-to-end against
+    a live `uvicorn` server: uploaded the real sample resume alongside
+    a synthetic unrelated (pastry chef) resume, uploaded a JD stating
+    "2+ years of experience" and "Bachelor degree ... required",
+    called `/rank`. Correct results: the real resume scored
+    `education_score: 1.0` (in-progress B.Tech correctly meets the
+    Bachelor requirement) and `experience_score: 0.0` (correctly,
+    honestly reflecting zero parseable dates in its EXPERIENCE
+    section — the real limitation found during hand-tracing, Section
+    11, not a defect); the chef resume scored `0.0`/`0.0` on both (no
+    EDUCATION section, no dates anywhere). Live-server test artifacts
+    (`data/app.db`, `data/uploads/`) cleaned up afterward, same as
+    every prior live-server verification.
+-   `Scorer` weighted blend + `Score` persistence manually verified
+    against a live `uvicorn` server (fresh `data/app.db`, recreated
+    after the schema gained `Score`'s `UniqueConstraint`): same real
+    sample resume + chef resume + electronics JD as every prior
+    session's verification. `final_score` matched hand-computed
+    `compute_score()` output exactly for both candidates (Manish:
+    `0.169`; Mary: `0.068`). Called `/rank` twice in a row and queried
+    the real SQLite `scores` table directly via `sqlite3`: exactly 2
+    rows existed after both calls (one per resume), confirming the
+    upsert updates in place rather than duplicating — not merely
+    asserted from the app layer, checked against the raw DB state.
+    Cleaned up afterward.
+-   `GET /results` manually verified against a live `uvicorn` server
+    with the same real sample resume + chef resume + electronics JD:
+    `GET /results` before any `/rank` call correctly returned
+    `200`/`{"job_id":1,"candidates":[]}` for a valid job (not an
+    error); `GET /results?job_id=999` correctly returned `404`; after
+    calling `/rank`, `GET /results`' JSON response was byte-for-byte
+    identical to what `/rank` had just returned — diffed directly, not
+    just asserted equal in a unit test. Cleaned up afterward.
+-   `GET /download` manually verified against a live `uvicorn` server
+    with the same real sample resume + chef resume + electronics JD:
+    before any `/rank` call, correctly returned a `200` with a
+    header-only CSV for a valid job (`content-length: 118`, header row
+    only, verified by inspecting the actual response body); an invalid
+    `fmt=xlsx` correctly returned `422` with FastAPI's own Pydantic
+    validation error detail; after calling `/rank`, the downloaded
+    CSV's data rows matched `/rank`'s own JSON response exactly
+    (`job_id,resume_id,candidate_id,candidate_name,...` for both real
+    candidates, `final_score` values matching to full float precision)
+    — inspected directly via `curl`, not just asserted in a unit test.
+    Cleaned up afterward.
+-   Feedback generation manually verified against a live `uvicorn`
+    server with the same real sample resume + chef resume +
+    electronics JD: after `/rank`, the real sample resume's persisted
+    `Feedback` row correctly read `"Meets the stated education
+    requirement. Experience duration could not be verified from the
+    available data."` — honest about the real EXPERIENCE data gap
+    (Session 18) rather than claiming insufficient experience;
+    `missing_skills` correctly `NULL` in the real SQLite row, not an
+    empty string. The chef resume's feedback correctly flagged "No
+    recognized degree found" (genuinely no EDUCATION section).
+    Confirmed via direct `sqlite3` query — not the API response, which
+    doesn't expose feedback yet. Called `/rank` twice and confirmed
+    exactly one `Feedback` row per `Score` existed after both calls
+    (same row `id`s). Also confirmed `/rank`'s JSON response has no
+    `feedback` key at all — the API-exposure cut (Section 11) verified
+    as real, not just documented. Cleaned up afterward.
+-   Feedback API exposure manually verified against a live `uvicorn`
+    server with the same real sample resume + chef resume +
+    electronics JD: `/rank`'s JSON response now correctly nests
+    `ranking`/`feedback` per candidate; the chef resume's `feedback.
+    strengths` correctly rendered as `[]`, not `[""]` — the exact
+    deserialization bug found and fixed during design, confirmed
+    against real data, not just the unit test written for it.
+    Programmatically compared `/rank`'s and `/results`' full JSON
+    responses for the same job and confirmed they were identical.
+    Confirmed `/download`'s CSV output was byte-for-byte unchanged
+    from before this milestone. Cleaned up afterward.
 
 ------------------------------------------------------------------------
 
@@ -1837,14 +2304,131 @@ Lessons
 
 ------------------------------------------------------------------------
 
+## Experience/Education Scoring (Session 18, Claude)
+
+### Achievements
+
+- Hand-traced `ResumeEntry.dates` against the real sample resume before designing, per Session 17's own instruction. Found the fact that reshaped the design: EDUCATION has three real, parseable dates; EXPERIENCE has zero standalone date lines anywhere, even inline within bullets — a plain, real internship/research-experience section with no dates in it at all.
+- Forked the two signals by what the data actually supports rather than forcing one uniform "duration/recency" heuristic onto both, as Section 17 had originally framed it: `compute_experience_score()` (duration-based, from parsed date ranges) and `compute_education_score()` (degree-level-based, from a curated keyword table) — full reasoning in Section 11.
+- For the JD side of both, reused the exact sidestep pattern `compute_skill_score()` already established (Session 16): search the JD's raw text directly for a recognizable pattern (a "N years" mention; a degree-level keyword) rather than building an independent JD parser, consistent with the project's repeated "no real JD corpus to validate a heuristic against" constraint.
+- Caught a real false-positive risk before shipping, not after: an initial degree-keyword design considered bare two-letter abbreviations ("BE", "ME") and found, by reasoning through word-boundary behavior, that they'd collide with the common English words "be"/"me" even under `\b` anchoring. Excluded those forms, required literal dots for "B.E."/"M.E." instead, and added a regression test proving the collision doesn't occur — same "verify boundary-matching behavior empirically" discipline Session 16 applied to skill-matching's C++/C#/.NET cases.
+- Added `build_resume_education()`/`build_resume_experience()` to `src/pipeline.py`, mirroring `build_resume_skills()`'s shape exactly (same `_reconstruct_sections()` shared helper Session 16 introduced).
+- Wired both new scores into `RankedCandidate`/`/rank` as independent fields (`experience_score`, `education_score`) alongside `semantic_score`/`skill_score` — still not blended via `Scorer`, since that's a distinct, deliberately deferred decision (Section 17).
+- Added 24 new tests across four files (`test_experience_matcher.py`, `test_education_matcher.py`, extended `test_ranking.py` and `test_rank_integration.py`) — 153 total, 145 fast + 8 slow (one pre-existing slow integration test extended with new field assertions).
+- Manually verified end-to-end against a live `uvicorn` server with real data: the real sample resume scored `education_score: 1.0` (in-progress B.Tech meets a "Bachelor degree required" JD) and `experience_score: 0.0` — honestly reflecting the exact data gap found during hand-tracing, not a defect. Cleaned up live-server test artifacts afterward, per established practice.
+- Fixed a pre-existing, unrelated small doc-drift issue found in passing: `RankResponse`'s docstring in `app/backend/api/schemas.py` still listed only the pre-Session-16 field set (never updated when `skill_score` was added) — corrected while touching the same docstring for the new fields.
+
+### Lessons
+
+- Hand-tracing before designing didn't just validate an assumption this time — it actively overturned the plan as originally framed (Section 17's single "duration/recency" heuristic) and produced a better-fitting design (duration for experience, level for education) than the one that would have resulted from designing first and testing against real data second. Worth treating hand-tracing as a design input, not a post-hoc check.
+- A false-positive risk this session (bare "BE"/"ME" colliding with real English words) was caught by reasoning through the regex's boundary behavior against plausible real sentences before writing any code — not by discovering it via a failing test after implementation. Session 16's lesson ("verify boundary matching empirically, don't assume it from `\b` alone") generalized cleanly to a different kind of pattern (keyword abbreviations vs. symbol-suffixed skill tokens), suggesting this is a durable habit for this codebase, not a one-off fix.
+
+------------------------------------------------------------------------
+
+## Scorer Weighted Blend + Score Persistence (Session 19, Claude, plan drafted and cross-reviewed with ChatGPT before implementation)
+
+### Achievements
+
+- Established, at the user's explicit request, a new standing workflow: draft an implementation plan as a standalone markdown document before writing any code, let the user relay it to ChatGPT for review, incorporate the feedback, then implement. This session is the first to follow it, and the file (not reproduced here, kept outside the repo) walked through what already existed, the goal, each design decision with a recommendation and rationale, concrete steps, a test plan, explicit out-of-scope items, and open questions — not just a task list.
+- ChatGPT's review agreed with the majority of the plan (computing `final_score` inside `ranking.py`, switching the sort key, keeping `ranking.py` DB-free) and raised two substantive points, both adopted: add a DB-level `UniqueConstraint(job_id, resume_id)` on `Score` alongside the already-planned application-level upsert (correctly distinguishing this as a data-integrity invariant, not a business rule like the already-accepted `Candidate`-dedup non-decision); and reclassify the `semantic_score` `[-1,1]` vs. other-signals `[0,1]` range mismatch from "accepted limitation" to explicitly tracked architectural debt, since it's empirically not a problem today but not guaranteed to stay that way. Full reasoning in Section 11.
+- ChatGPT also raised a lifecycle question the original plan hadn't addressed: `Score` is derived/cached data, not authoritative — future heuristic or model changes silently stale existing rows. Not solved this milestone (out of scope, explicitly deferred to whichever session builds `/results`), but acknowledged directly in the design decision rather than left implicit, and a `computed_at` timestamp ChatGPT suggested as future groundwork was deliberately not added yet (no concrete need forces it today) but logged as a TODO rather than silently dropped.
+- Implemented `final_score` on `RankedCandidate` (`src/ranking.py`), computed via `compute_score(ScoreComponents(...))` from the four already-real signals; switched `/rank`'s sort key from `semantic_score` to `final_score`.
+- Added `UniqueConstraint("job_id", "resume_id")` to `Score` (`src/database/models.py`); implemented application-level upsert (query by `(job_id, resume_id)`, update in place if found, else insert) in the `/rank` route (`app/backend/api/routes.py`), single `db.commit()` after the loop — persistence stayed entirely in the route, `rank_resumes_against_job()` remained pure/DB-session-free.
+- Added 8 new tests across three files, including a direct DB-level test proving the `UniqueConstraint` is real (not just declared) by bypassing the app-level upsert entirely and expecting `IntegrityError`, and a test proving the sort key is genuinely `final_score`-driven using a fixture deliberately constructed so the `semantic_score`-only and `final_score` orderings disagree — 157 total, 148 fast + 9 slow.
+- Manually verified end-to-end against a live `uvicorn` server with real data (fresh `data/app.db`, recreated for the new schema): `final_score` matched hand-computed values exactly for both the real sample resume and the synthetic chef resume; called `/rank` twice and confirmed via a direct `sqlite3` query against the real DB that exactly one `Score` row per resume existed after both calls, not two.
+
+### Lessons
+
+- The plan-then-cross-review-then-implement workflow caught a real distinction (data-integrity invariant vs. business rule) that the original plan's own reasoning-by-analogy had blurred — the plan's argument against a `UniqueConstraint` leaned on a real precedent (`Candidate` dedup) that turned out not to actually apply once someone else examined *why* that precedent held. Worth remembering that even a well-reasoned analogy can smuggle in a false equivalence; a second opinion is well-suited to catching exactly that kind of error, more than catching sloppy reasoning outright.
+- Distinguishing "accepted limitation" from "architectural debt" as two different categories (rather than one blurry "known issue" bucket) is a useful sharpening of PROJECT_BIBLE Section 18's own vocabulary going forward — the former says "we're fine leaving this," the latter says "we're choosing not to fix this yet, revisit if evidence changes." Worth applying this distinction retroactively if other Section 18 entries turn out to actually be the latter mislabeled as the former.
+
+------------------------------------------------------------------------
+
+## `GET /results` (Session 20, Claude, plan drafted and cross-reviewed with ChatGPT before implementation — second milestone under Session 19's new workflow)
+
+### Achievements
+
+- Drafted a second standalone plan document (following Session 19's newly-established workflow) covering what already existed, the read-vs-recompute question, the empty-vs-404 distinction, whether to reuse `RankedCandidate`, pagination, and where the query logic should live — each with a recommendation and rationale, plus explicit open questions.
+- ChatGPT's review agreed with every recommendation as written, all four explicit questions answered "yes, as proposed" — a different outcome from Session 19 (which changed two decisions), but the review still surfaced two things worth recording, not just a rubber stamp: it independently connected `Score`'s "derived data" status (Session 19) to a concrete gap this milestone doesn't resolve — `/results` can't currently distinguish "never ranked" from "ranked, zero matches," both returning identical `200`/`[]` — and suggested a future `last_ranked_at` timestamp (reinforcing, not adding to, Session 19's `computed_at` TODO); and it connected this milestone to the still-unbuilt `/download` route, suggesting `/download` should consume the same persisted-read pattern established here rather than recomputing independently.
+- Implemented `ResultsResponse` (`app/backend/api/schemas.py`, reusing `RankedCandidate` directly) and `GET /results` (`app/backend/api/routes.py`): 404 on a nonexistent job, a direct `Score`⋈`Resume`⋈`Candidate` query filtered by `job_id` and ordered by `final_score` descending for an existing one, mapped into `RankedCandidate` instances — no call to `rank_resumes_against_job()` anywhere in the path.
+- Added 7 new tests across two files: 5 fast route-level tests (`tests/test_results_route.py` — 404, empty-list-for-never-ranked, correct ordering, correct field mapping, and a dedicated test proving a never-ranked `Resume` is omitted rather than shown with a placeholder score) and 2 slow integration tests extending `test_rank_integration.py` (a real `/rank` → `/results` chain asserting field-for-field equality; `/results` returning `200`/`[]` for a real valid job before any `/rank` call) — 164 total, 153 fast + 11 slow.
+- Manually verified end-to-end against a live `uvicorn` server with real data: `/results` before `/rank` correctly returned `200`/`[]`; `/results` for a nonexistent job correctly returned `404`; `/results` after `/rank` was byte-for-byte identical to `/rank`'s own response, diffed directly rather than merely asserted equal.
+
+### Lessons
+
+- A cross-review that agrees with everything isn't automatically a lower-value review than one that changes decisions — this session's review still did real work: it independently surfaced a gap (never-ranked vs. zero-matches ambiguity) that the original plan hadn't named at all, not just validated what was already there. Worth not treating "no changes requested" as "nothing gained" when deciding whether the review step was worth doing.
+- The plan-then-review workflow is starting to compound across sessions in a specific way: Session 19's deferred question ("should `/results` trust persisted rows or recompute?") was exactly what this session's plan opened with and resolved, and this session's own deferred question (never-ranked vs. zero-matches) is now sitting in the TODO for whichever session needs it. Each plan document is implicitly answering the previous one's open questions and generating new ones for the next — the workflow is functioning as a chain, not a series of unrelated one-off reviews.
+
+------------------------------------------------------------------------
+
+## `GET /download` (Session 21, Claude, plan drafted and cross-reviewed with ChatGPT before implementation — third milestone under Session 19's workflow)
+
+### Achievements
+
+- Drafted a third plan document, this time explicitly predicted in advance by Session 20's own cross-review ("`/download` should be exporting persisted ranking results rather than invoking ranking logic again... conceptually `GET /results` → format → export") — the plan opened by confirming that framing rather than deriving it from scratch.
+- ChatGPT's review again agreed with every core recommendation (shared read-helper extraction, creating the `Export` module now, CSV-only via stdlib, `Literal["csv"]` for automatic `422`, never recomputing, mirroring `/results`' 404/empty-list split) and made one adopted refinement: keep `csv_exporter.py`'s function signature unaware of `job_id` specifically (`extra_columns: dict[str, object] | None` instead of a `job_id: int` parameter), reasoning that "the exporter's responsibility is formatting rows. It doesn't really care what those rows represent" — cheap to design correctly at the module's first implementation rather than break the signature later for a hypothetical future export (e.g. once `Feedback` exists).
+- Recognized, before ChatGPT even needed to point it out, that `/results`' inline query (Session 20, deliberately kept inline because it had exactly one caller) now had a second, identical caller — extracted `_ranked_candidates_for_job()` as a shared private helper in `app/backend/api/routes.py`, directly applying the "extract once a second consumer exists, not before" precedent from Session 16's `_reconstruct_sections()`.
+- Created `src/export/csv_exporter.py` — this project's first `Export` module implementation, closing the one stage in the Section 4 architecture diagram that had existed only as a diagram label since scaffold. Deliberately did not reach for `pandas` (listed in `requirements.txt` since scaffold, never once imported anywhere in the codebase) — stdlib `csv.DictWriter` fully covers a flat-row export.
+- Implemented `GET /download`: `fmt: Literal["csv"] = "csv"`, `404` on missing job, shared helper + `csv_exporter` + FastAPI `Response` with `text/csv` media type and a `Content-Disposition` attachment header — no temp file written anywhere.
+- Added 12 new tests across three files: 5 unit tests for the exporter itself (`tests/test_csv_exporter.py`), 5 fast route tests (`tests/test_download_route.py` — 404, `422` on invalid `fmt`, header-only CSV for never-ranked, correct ordering, never-ranked-resume omission), and 2 slow integration tests extending `test_rank_integration.py` (`/rank` → `/download` field-for-field comparison; header-only CSV before any `/rank` call) — 176 total, 163 fast + 13 slow.
+- Manually verified end-to-end against a live `uvicorn` server with real data: header-only CSV before `/rank`; `422` for `fmt=xlsx`; downloaded CSV's data rows matched `/rank`'s JSON response exactly after ranking, including the injected `job_id` column — inspected directly via `curl`, not just asserted in a test.
+- Updated `PROJECT_BIBLE.md` Section 7 (Module Responsibilities) to finally give Export its own line, closing a gap that had existed since the project's very first session.
+
+### Lessons
+
+- This is the first milestone where the *previous* session's cross-review had already named the shape of the next one in advance ("`/download` should consume `/results`' pattern") — the plan-then-review chain isn't just generating open questions for the next session anymore, it's sometimes generating the next session's core design decision outright. Worth treating a prior review's "not for this milestone, but..." asides as seeds for the next plan's opening framing, not just as TODO-list entries.
+- Diverging from an established pattern ("keep it inline until a second consumer exists") is easiest to justify convincingly when the divergence has an independent, separate reason behind it — the `Export` module wasn't justified by "this one's special," it was justified by a *different* rule entirely (a named-but-never-built architectural stage getting its first real use case) that happened to point the same direction. Two independent reasons pointing the same way is a stronger basis for a real exception than one reason stretched to cover it.
+- Applying the "design the seam now, before a second consumer forces a signature break" reasoning *prospectively* (the `extra_columns` refinement, adopted before any second consumer actually exists yet) is a different move from applying it *retroactively* (the `_ranked_candidates_for_job()` extraction, done because a second consumer already existed). Both are the same underlying principle, but only the second one was strictly necessary today — the first was a judgment call about how much to anticipate, made cheaply because the module was brand new, not a rule this project should reflexively apply everywhere.
+
+------------------------------------------------------------------------
+
+## Feedback Generation (Session 22, Claude, plan drafted and cross-reviewed with ChatGPT before implementation — fourth milestone under Session 19's workflow, first with substantial pushback)
+
+### Achievements
+
+- Drafted a fourth plan document. Hand-traced the scaffold's unvalidated `recommendation` thresholds against real data before designing further (same discipline as Session 18's EXPERIENCE-date hand-trace): both real `final_score` values this project has ever produced (Manish `0.169`, chef `0.068`) would be labeled "Weak match" under the existing `>= 0.75`/`>= 0.5` scaffold thresholds — including the real, relevant candidate. This finding directly motivated (and later, via ChatGPT's review, further reshaped) the `recommendation` redesign.
+- ChatGPT's review was substantially more critical than Sessions 20/21 (rated 8.8–9.0, not 9.7+) and raised five real architectural concerns, not refinements — full reasoning and each resolution in Section 11. In summary: agreed fully with extending the scorer modules to expose intermediate "why" detail rather than duplicating matching logic (called it "probably the best design decision in the proposal"); pushed back on `missing_skills = []` (should be `None` — "we don't know" and "we know it's nothing" are different states); found a concrete flaw in rank-position `recommendation` text (discards score magnitude); objected to adding `feedback` directly onto `RankedCandidate` ("every future API that only needs ranking data inherits feedback as well" — the biggest concern raised); argued API-contract changes and generation+persistence are different kinds of review and should be split into separate milestones; and rejected import-aliasing as a fix for the two-classes-named-`Feedback` collision in favor of an actual rename.
+- Closing observation taken at face value rather than filed away: *"Claude is beginning to optimize for completing the architecture diagram... rather than asking what is the smallest coherent feature we can ship."* Scoped the milestone down accordingly — cut API exposure entirely (not deferred-in-name), dropped `RankedCandidate` from the plan, simplified `generate_feedback()` to a pairwise pure function once rank-based `recommendation` (the only reason it needed the full sorted candidate list) was replaced with a fact-composed sentence.
+- Implemented `matched_skills()`/`describe_education_match()`/`describe_experience_match()` in the three existing scorer modules, refactored `compute_*_score()` to use them — verified as a pure refactor (all 31 pre-existing tests passed unchanged, not assumed safe). Caught and fixed a real subtlety while implementing `describe_experience_match()`'s new `any_parseable_dates` flag: naively checking `duration > 0` would misclassify a genuinely-parsed zero-length range ("2023 - 2023") as "unparseable" — added a dedicated `_has_parseable_range()` check instead of conflating the two.
+- Rewrote `src/feedback/generator.py`: `GeneratedFeedback` (frozen, `missing_skills: list[str] | None`), `generate_feedback(resume_skills, education_entries, experience_entries, job_description) -> GeneratedFeedback` — pairwise, pure. Hand-traced strengths/weaknesses wording against Manish's real resume + the real electronics JD before finalizing it: correctly produces "Meets the stated education requirement" (strength) and, honestly, "the Experience section doesn't include date ranges we could parse, so experience duration couldn't be verified" (weakness) — not "insufficient experience," which the data doesn't support.
+- Wired `Feedback` persistence into `/rank`'s existing per-candidate `Score` upsert loop (no second pass needed once feedback became pairwise) — `Feedback.score_id` gained `unique=True`, `missing_skills` gained `nullable=True`. `RankResponse`/`ResultsResponse`/`GET /download`'s CSV are all untouched, verified live (no `feedback` key in `/rank`'s JSON response).
+- Added 26 new tests across six files (scorer module extensions, new `test_feedback_generator.py`, `Feedback.score_id` uniqueness, `/rank` persistence + upsert) — 202 total, 187 fast + 15 slow.
+- Manually verified end-to-end against a live server with real data: real, honest feedback text for both the real sample resume and the synthetic chef resume, `missing_skills` correctly `NULL` (not an empty string) in the real DB row, upsert confirmed via unchanged row `id`s across two `/rank` calls, and `/rank`'s response shape confirmed unchanged.
+
+### Lessons
+
+- The plan-then-cross-review workflow's value isn't just catching design errors — this session it caught a *framing* error (optimizing for "complete the diagram" over "ship the smallest coherent piece") that had shaped several decisions at once (rank-based `recommendation`, feedback bolted onto `RankedCandidate`, bundling API exposure) rather than any single one of them in isolation. A review that names the pattern behind several decisions is more valuable than one that corrects them individually — worth watching for that kind of feedback specifically, not just itemized disagreements.
+- Dropping a design element (rank-based `recommendation`) didn't just remove a flaw — it simplified something else for free: once feedback didn't need to know a candidate's rank position, `generate_feedback()`'s signature collapsed from needing the full sorted candidate list to a simple pairwise function mirroring `compute_*_score()`'s own shape. A rejected design choice cascading into an unrelated simplification is a good sign the rejection was correct, not just tolerated.
+- Real hand-tracing caught a subtle bug in this session's own new code before it shipped (the `any_parseable_dates` zero-vs-unparseable conflation) — not in a prior session's code being revisited, but in code written *during* this same session, within the hour. The "verify against real data, don't assume the obvious implementation is correct" discipline catches self-authored mistakes just as often as it catches scaffold-era ones.
+
+------------------------------------------------------------------------
+
+## Feedback API Exposure (Session 23, Claude, plan drafted and cross-reviewed with ChatGPT before implementation — fifth milestone under Session 19's workflow, first to fully resolve a prior review's concerns)
+
+### Achievements
+
+- Drafted a fifth plan document, scoped narrowly to exactly what Session 22 deferred — the response-shape decision, nothing else — treating Session 22's own "keep the milestone to the response-shape decision, not more" note as binding, not just a suggestion.
+- While surveying what already existed (before proposing a design), found a concrete, present-tense instance of the exact risk Session 22's cross-review had described in the abstract: `_ranked_candidates_for_job()` is shared by `/results` *and* `/download`, and `csv_exporter.py` builds CSV columns via introspection over `RankedCandidate`'s dataclass fields — adding `feedback` directly to `RankedCandidate` would have broken or corrupted `/download`'s CSV, a consumer that never asked for feedback. This turned Session 22's abstract objection into a concrete, demonstrable one before any code was written.
+- Verified directly (not assumed) that `"".split("\n")` returns `['']`, not `[]`, and found this wasn't hypothetical — Session 22's own prior live verification had already produced exactly this row in real, currently-persisted data (the chef resume's empty `Feedback.strengths` column). Caught and fixed with a `_split_or_empty()` guard before any reader of that data existed — the bug was found and fixed at design time, never actually shipped.
+- ChatGPT's review (9.4–9.6, up from 8.8–9.0) agreed with every core design decision — `CandidateAssessment` composed at the API layer, `/download` left untouched, `/rank` needing no new query since it already had `feedback_data` in memory, inner join with no defensive handling for an invariant the schema itself guarantees, changing the response shape directly rather than gating it behind `?include_feedback=true` — and raised one forward-looking, non-blocking concern: the new `_candidate_assessments_for_job()` query duplicates `_ranked_candidates_for_job()`'s core join. Not fixed now; logged as a watch item — a *third* similarly-shaped query should be the trigger to introduce a shared internal read model, not this second one.
+- Implemented `CandidateAssessment` (`ranking: RankedCandidate`, `feedback: GeneratedFeedback`) in `app/backend/api/schemas.py`; wired `/rank` to build it from data already in its existing loop (no new query); added `_candidate_assessments_for_job()` (new `Score`⋈`Feedback`⋈`Resume`⋈`Candidate` inner join) for `/results`; left `/download` completely untouched.
+- Updated 6 existing test files for the new nested `{ranking, feedback}` response shape (including fixing pre-existing `/results` test fixtures that had never created matching `Feedback` rows, now required by the inner join) and added 2 new tests — 204 total, 189 fast + 15 slow.
+- Manually verified end-to-end against a live server with real data: `/rank`'s response correctly nested `ranking`/`feedback`, the chef resume's `strengths` correctly rendered as `[]` (the exact bug found during design, confirmed fixed against real data); `/rank` and `/results`' full JSON responses for the same job compared programmatically and found identical; `/download`'s CSV confirmed byte-for-byte unchanged.
+
+### Lessons
+
+- This is the first milestone in the plan-then-cross-review workflow where the review's rating went *up* significantly from the immediately preceding one (8.8–9.0 → 9.4–9.6) rather than staying roughly flat or dropping — a concrete signal that Session 22's scoped-down response to real pushback was the right call, not just a face-saving retreat. Scope discipline paid off measurably in the very next review, not just in principle.
+- Surveying "what exists today" isn't just scene-setting — this session it surfaced a real, load-bearing finding twice (the `_ranked_candidates_for_job()` blast-radius risk, the already-persisted empty-string row) before any design was proposed. Both findings directly shaped the plan's recommendations rather than being discovered during implementation or by the reviewer. Worth treating the "what exists today" section of a plan as active investigation, not a preamble.
+- A review that agrees with everything and flags one thing as "watch for a third occurrence, not a problem yet" is a different, more mature kind of signal than either full agreement or substantive pushback — it's neither "ship it" nor "redesign it," but "this specific decision is fine, keep an eye on the pattern." Worth logging watch items explicitly (as this session did, in Section 16) rather than either ignoring them or treating them as blocking.
+
+------------------------------------------------------------------------
+
 # 16. Current TODO
 
 ## High Priority
 
-- Score experience/education so `Scorer`/`Score` persistence can finally be wired — 2 of 4 signals now real (`semantic_score`, `skill_score`); this is what's left
-- Wire the remaining 2 stub routes (`/results`, `/download`) — `/results` needs `Score` persistence to exist first (still deferred, Section 11)
+- Frontend wiring — Streamlit UI is still scaffold (renders widgets, but the "Rank" handler just shows a placeholder string, no `src/` imports or API calls). The one remaining gap between the current backend and the Section 2 Vision, now that `/rank`/`/results` return both ranking and feedback (Session 23).
 - Extend `ALIASES` for further common headings not yet recognized (e.g. Certifications synonyms, Summary synonyms) — same mechanism just used for "Positions of Responsibility"
-- Export module — final architecture step (Section 4), doesn't exist yet
 
 ## Medium
 
@@ -1852,6 +2436,13 @@ Lessons
 - Additional Unicode normalization
 - `MAX_UPLOAD_SIZE_MB` (in `app/backend/config.py`) is still defined but unenforced by `/upload-resume` — no size validation exists yet
 - `UPLOAD_DIR` has no retention/cleanup policy — every upload is kept indefinitely under a `uuid4`-prefixed filename
+- `computed_at`/`last_ranked_at` timestamp on `Score` — raised twice now (Session 19's `computed_at` suggestion, Session 20's `last_ranked_at` suggestion, both from ChatGPT cross-review) as groundwork for reasoning about `Score`/`Feedback` staleness and for `/results`/`/download` to distinguish "never ranked" from "ranked, zero matches" (both currently return identical `200`/empty response); not needed by any current code path
+- `semantic_score`'s `[-1,1]` range blended unnormalized against the other three `[0,1]` signals in `compute_score()` — tracked as architectural debt, not an accepted limitation, since Session 19 (Section 11/18); revisit if real data ever produces a negative `semantic_score` in practice, or if the question of whether `semantic_score` should represent raw cosine similarity vs. a normalized ranking signal gets resolved
+- Export formats beyond CSV (JSON, XLSX) — no concrete requirement yet (Session 21); revisit only if one emerges
+- `GET /download`'s CSV gaining feedback columns — still undecided (Sessions 21/22/23 all explicitly deferred this); needs a `strengths`/`weaknesses` list-to-CSV-cell serialization format chosen before it can happen
+- `missing_skills` real values (Session 22) — still `None`; genuinely blocked on an independently-extracted JD skill list, which this project has no real JD corpus to validate a heuristic against. Would need real, varied JD examples to unblock, not more design effort against synthetic text.
+- **Watch item (Session 23, ChatGPT cross-review, not a bug):** `_ranked_candidates_for_job()` and `_candidate_assessments_for_job()` (`app/backend/api/routes.py`) are two similar-but-genuinely-different `Score`⋈...⋈`Candidate` join queries — accepted duplication for now. If a *third* similarly-shaped query appears (e.g. a future export-with-feedback or dashboard endpoint), that's the trigger to introduce a shared internal read model (ChatGPT's suggested shape: a `PersistedAssessment` representing the full join, projected per endpoint) rather than continuing to duplicate joins.
+- **Watch item (Session 23, ChatGPT cross-review, not a decision needed now):** `CandidateAssessment` (`app/backend/api/schemas.py`) is currently API-layer-only. If a second, non-API consumer of the ranking+feedback pairing ever appears (CLI, batch export, a frontend adapter), promote it into a shared `src/` domain object rather than leaving it API-specific indefinitely.
 
 ## Low
 
@@ -1864,15 +2455,17 @@ Lessons
 
 Goal
 
-One clear recommendation: **experience/education scoring** — the last piece needed before `Scorer`/`Score` persistence can finally be wired. Two of four `ScoreComponents` signals are now real (`semantic_score`, `skill_score` — Session 16); this is what's left.
+One clear recommendation: **wire the frontend.** With `/rank`/`/results` now returning both ranking and feedback (Session 23), every backend capability the Section 2 Vision describes exists and is reachable — the Streamlit UI is the only piece left that doesn't actually call any of it (the "Rank" button currently just shows a placeholder string).
 
 Tasks
 
-- Design a heuristic for turning `ResumeEntry.dates` (already extracted, but only as an unparsed string like "Sep 2023 – 2027") into a comparable duration/recency signal — needs hand-tracing against the real sample resume's actual dates before committing to a parsing approach, same discipline as every prior extraction milestone.
-- Decide what a JD's experience/education *requirement* looks like as extractable structure (e.g. "3+ years required," "Bachelor's degree required") — another JD-side gap, same category of problem `parse_job_description()` (JD has no section structure) and skill matching (JD has no independent skill list) each already navigated by sidestepping independent JD extraction. Consider whether the same sidestep applies here (e.g., check for the candidate's own experience duration/degree level appearing in JD-recognizable patterns) rather than assuming a full JD-side parser is needed.
-- Add comprehensive unit tests; verify against real data (the sample resume's actual EDUCATION/EXPERIENCE entries).
+- Decide scope for a first cut: upload widgets already exist in the scaffold — wiring them to `POST /upload-resume`/`POST /upload-job` is likely the natural starting point, then the "Rank" button to `POST /rank`, then rendering `CandidateAssessment`'s `ranking`/`feedback` per candidate.
+- Decide how feedback specifically gets displayed — `strengths`/`weaknesses` are lists of plain-language sentences; decide the UI treatment (expandable sections? always-visible? per-candidate cards?) with actual real feedback text in hand (Session 22's hand-traced examples are a good starting reference) rather than designing against a hypothetical.
+- Decide whether the frontend calls the backend directly (same process/host, simplest) or whether any config/URL handling is needed — check `app/frontend/streamlit_app.py`'s current scaffold and `app/backend/config.py` before assuming.
+- Continue the plan-then-cross-review workflow (Sessions 19–23) — draft a plan document first, get it reviewed, then implement. This is a different kind of milestone than the last several (UI/UX decisions, not backend architecture) — expect the review to weigh in differently than on a routes-and-persistence plan.
+- Add tests where meaningful (Streamlit UI testing has different tooling/conventions than the backend's `pytest`+`TestClient` setup — figure out what's appropriate before assuming `pytest` patterns carry over unchanged); verify by actually running the app and using it, not just unit-testing handler functions in isolation.
+- Not in scope: `/download` CSV feedback columns, `missing_skills` real values, the query-duplication/`CandidateAssessment`-promotion watch items (Section 16) — none are blocking frontend work.
 
-Once experience/education scoring is real, revisit wiring `Scorer`/`ScoreComponents` and persisting `Score` rows — both deliberately deferred since Session 15 (Section 11), not abandoned. At that point also reconsider whether `/rank`'s response should gain an aggregate score field (explicitly avoided so far per ChatGPT's "don't imply a complete ranking methodology before one exists" reasoning) now that all four signals would finally be real.
 ------------------------------------------------------------------------
 
 # 18. Known Technical Debt
@@ -1956,17 +2549,103 @@ Once experience/education scoring is real, revisit wiring `Scorer`/`ScoreCompone
     happens to look like an email/phone — `None`). No real resume
     seen so far exhibits this; documented as an accepted gap, not
     fixed with an untuned heuristic (e.g. a word-count cap).
--   The remaining 2 routes (`/results`, `/download`) are still
-    `raise NotImplementedError` stubs — `/results` needs `Score`
-    persistence to exist first, which is itself deliberately deferred
-    (see Section 11).
--   `/rank` exposes `semantic_score`/`skill_score` as independent
-    fields, still sorts by `semantic_score` only — `skill_score` isn't
-    yet used for ordering, just returned. `Scorer`/`ScoreComponents`'s
-    weighted blend remains unwired (experience/education still aren't
-    real), and no `Score` row is ever persisted. All deliberate,
-    documented decisions (Section 11), not oversights; revisit once
-    experience/education scoring exist (see Section 17).
+-   No stub routes remain — `GET /download` (Session 21) was the last
+    one. Feedback is now generated, persisted, *and* exposed
+    (Session 23) — the frontend is the only gap left before the
+    Section 2 Vision is fully real (see Section 17).
+-   `GET /download`'s CSV still doesn't include feedback — deliberately
+    left out of Sessions 21, 22, *and* 23 (Section 11), not an
+    oversight repeated by accident. `strengths`/`weaknesses` are
+    `list[str]`; no CSV serialization format for them has been chosen.
+    Revisit per Section 16/17 once that's designed.
+-   `missing_skills` (`GeneratedFeedback`) is always `None` — genuinely
+    blocked on independent JD-skill extraction, which this project has
+    no real JD corpus to validate a heuristic against (the same wall
+    that has blocked JD title extraction and JD section detection
+    since Sessions 8/16). Accepted, not fabricated with a curated
+    vocabulary — see Section 11.
+-   `strengths`/`weaknesses` are stored as newline-joined text in
+    plain `String` DB columns (`Feedback` table) — a small, explicit
+    but minimally-designed serialization choice made during Session
+    22's implementation, not deeply considered as its own decision.
+    Now exercised end-to-end for the first time (Session 23's
+    `_generated_feedback_from_row()` read path), including a real,
+    caught-and-fixed edge case: an empty column must deserialize to
+    `[]`, not `[""]` (`"".split("\n")` returns the latter). Accepted as
+    "good enough, now proven correct," not revisited as a format
+    choice (e.g. JSON-encoding the columns instead) without a concrete
+    reason to.
+-   `_ranked_candidates_for_job()`/`_candidate_assessments_for_job()`
+    (`app/backend/api/routes.py`) are two structurally similar
+    `Score`⋈...⋈`Candidate` join queries — accepted duplication
+    (Session 23, cross-reviewed), not unified into a shared read
+    model. Watch item, not a defect: a third similarly-shaped query
+    appearing is the trigger to introduce one (see Section 16).
+-   `CandidateAssessment` (`app/backend/api/schemas.py`) is
+    API-layer-only, not a `src/` domain type — accepted for now
+    (Session 23, cross-reviewed). Watch item: promote it if a
+    non-API consumer of the ranking+feedback pairing ever appears
+    (see Section 16).
+-   `GET /results`/`GET /download` cannot currently distinguish "this
+    job has never been ranked" from "this job was ranked and zero
+    candidates matched" — both produce an identical empty response
+    (`200`/`candidates: []` for `/results`, `200`/header-only CSV for
+    `/download`). Raised during Session 20's ChatGPT cross-review, not
+    resolved: the suggested fix (a `last_ranked_at` timestamp on
+    `Score`) reinforces the `computed_at` TODO already logged in
+    Session 19 (Section 16). Accepted for now — no concrete need has
+    forced this yet, and the ambiguity is at least honest (never
+    fabricates data either way), just not maximally informative.
+-   `Score` is derived/cached data, not authoritative business data —
+    raised during Session 19's ChatGPT cross-review, acknowledged but
+    not resolved (Section 11). A `Score` row is fully recomputed and
+    overwritten on every `/rank` call for its `(job_id, resume_id)`
+    pair, so it's accurate "as of the last `/rank` call," never merged
+    with a stale value — but if the weighting, any of the four
+    heuristics, or the embedding model ever changes, every existing
+    `Score` row silently becomes stale with no signal that happened
+    (no `computed_at` timestamp exists — see Section 16). Whether a
+    future `/results` should trust persisted rows as-is or trigger a
+    live recompute is unresolved; revisit when `/results` is built.
+-   `semantic_score`'s theoretical `[-1, 1]` range is blended
+    unnormalized against the other three signals' `[0, 1]` range in
+    `compute_score()` — a weighted average assumes comparable input
+    scales, and today these aren't. Tracked as **architectural debt**
+    (not an accepted limitation — see Section 11's distinction,
+    drawn from Session 19's ChatGPT cross-review) because real MiniLM
+    cosine similarities for real resume/JD text have so far always
+    landed as small positive fractions (~0.13–0.19), so this hasn't
+    produced a nonsensical `final_score` in practice — but that's
+    empirical behavior, not a guarantee. A legitimately negative
+    `semantic_score` would swing `final_score` in a way no other
+    signal can. Also unresolved: whether `semantic_score` is meant to
+    represent raw cosine similarity or a normalized ranking signal —
+    those imply different fixes.
+-   `compute_experience_score()` returns 0.0 for any resume whose
+    EXPERIENCE section has no date range it can parse — which is true
+    of the *only* real resume this project has ever validated against
+    (hand-traced during design, Session 18; see Section 11). Not a
+    heuristic bug: the source document genuinely contains no
+    date information in that section. A real, concrete illustration
+    that this signal will read as "no experience" for a meaningful
+    slice of real resumes (particularly student/early-career resumes
+    without formal job date ranges), not a hypothetical edge case.
+-   `compute_experience_score()`/`compute_education_score()`'s JD-side
+    detection is a single regex search over the whole JD text, taking
+    the first match — a JD phrased as "3-5 years of experience" reads
+    only "3"; a JD mentioning multiple degree levels in different
+    contexts (e.g. "Bachelor's required, Master's preferred") reads
+    only the highest level found, not which one is the actual minimum
+    bar. Accepted (Section 11) as the same "no real JD corpus to
+    validate a richer heuristic against" constraint already applied
+    to skill matching and JD title extraction.
+-   `compute_education_score()`'s degree-level vocabulary deliberately
+    excludes bare two-letter abbreviations without required
+    punctuation ("BE", "ME", "BA", "MS", "MA") due to a real,
+    reasoned-through collision risk with common English words
+    ("be"/"me") — see Section 11. A resume or JD using these bare
+    forms (rather than "Bachelor's"/"B.Tech"/"B.E.") will not be
+    recognized. Documented gap, not guessed at without evidence.
 -   Skill matching is exact-token only — no alias/synonym awareness
     (Git≠GitHub, SQL≠PostgreSQL, JS≠JavaScript). Accepted (Section 11):
     an alias dictionary has the same unbounded-vocabulary problem
@@ -2132,6 +2811,42 @@ You should be able to explain:
 -   Why `\b` was empirically tested rather than trusted, what it got wrong for `C++`/`C#`/`.NET`, and how the lookaround fix differs
 -   Why the "Positions of Responsibility" bug wasn't actually a bug in the new skills extractor, and what that says about how bugs can hide in already-accepted, already-documented limitations until something new depends on them
 -   Why the `ALIASES` extension (not a code change to `skills_extractor.py`) was the correct fix, and how that traces back to a Session 6 precedent
+-   Why experience scoring is duration-based but education scoring is degree-level-based, rather than one uniform heuristic for both
+-   Why hand-tracing the real resume's dates before designing changed the plan, rather than just confirming it
+-   Why `compute_experience_score()` honestly returns 0.0 for the real sample resume, and why that's a correct result rather than a bug
+-   Why bare two-letter degree abbreviations ("BE", "ME") were excluded from the education keyword table, and what real English words they'd collide with
+-   Why both new matcher functions search the JD's raw text directly instead of building an independent JD parser, and how that traces back to skill matching's precedent
+-   Why `Score` gained a `UniqueConstraint(job_id, resume_id)` when `Candidate` was deliberately left without dedup, and what distinguishes a data-integrity invariant from a business rule
+-   Why `final_score` is computed inside `rank_resumes_against_job()` rather than in the `/rank` route, and why persistence went the other way (route, not `ranking.py`)
+-   Why `Score` is described as derived/cached data rather than authoritative, and what that implies for a future `/results` implementation
+-   Why the `semantic_score` range mismatch is classified as architectural debt rather than an accepted limitation, and what distinguishes the two categories
+-   Why this milestone was drafted as a standalone plan document and cross-reviewed before any code was written, and what two decisions that review actually changed
+-   Why `GET /results` never calls `rank_resumes_against_job()`, and how that split maps onto the `POST` (compute+persist) vs. `GET` (read) distinction across the whole API
+-   Why an existing-but-never-ranked job returns `200`/`[]` from `/results` rather than `404` or triggering a rank automatically
+-   Why `/results` reuses `RankedCandidate` instead of introducing a second, structurally identical type, and where the "this data might be a few `/rank` calls old" distinction actually lives instead (a docstring, not a type)
+-   Why a resume with no `Score` row for a given job is silently omitted from `/results` rather than shown with a null or zero score, and what that has in common with the "skip persistence when no name" decision from `/upload-resume`
+-   Why `/results` can't currently tell "never ranked" apart from "ranked, zero matches," and why that's an accepted-for-now gap rather than something fixed on the spot
+-   Why a cross-review that agreed with the entire plan as written still counted as worth doing
+-   Why `_ranked_candidates_for_job()` was extracted now but not during Session 20, and what specifically changed to justify it
+-   Why the `Export` module was created now, breaking the "keep it inline until proven otherwise" pattern every prior route-level decision followed — what two independent reasons pointed the same direction
+-   Why the CSV exporter doesn't know what `job_id` means, and why that's a different kind of design decision than the read-helper extraction (designed prospectively vs. triggered by an already-existing second caller)
+-   Why `pandas` sitting unused in `requirements.txt` since scaffold didn't make it the obvious choice for CSV export
+-   Why an invalid `fmt` value returns `422` via `Literal["csv"]` rather than a manually-raised `400`, and how that traces back to the `PDFParseError` HTTP-status precedent
+-   Why every route in the Section 4 architecture diagram being live doesn't mean the Section 2 Vision is done — what's still missing and why those two gaps (Feedback, Frontend) are qualitatively different from "wire another route"
+-   Why `matched_skills()`/`describe_education_match()`/`describe_experience_match()` were extracted from the existing scorer functions instead of reimplemented in the Feedback module, and what "pipeline divergence" risk that avoids
+-   Why `missing_skills` is `None`, not `[]`, and what claim an empty list would make that this project has no basis to support
+-   Why the original rank-position `recommendation` design was rejected, and specifically what information it discarded that an absolute score preserves (even miscalibrated)
+-   Why `generate_feedback()` ended up pairwise (resume + job in, one result out) rather than needing the full sorted candidate list, and how that traces back to dropping rank-based `recommendation`
+-   Why `feedback` was deliberately not added to `RankedCandidate`, and what "every future API that only needs ranking data inherits feedback as well" means concretely
+-   Why generating+persisting Feedback and exposing it via the API were treated as two separate milestones rather than one
+-   Why two classes were both going to be named `Feedback` before the rename to `GeneratedFeedback`, and why renaming was preferred over import aliasing
+-   Why Session 22's cross-review scored lower than Sessions 20/21's despite the underlying implementation working correctly — what "smallest coherent feature" means as a critique distinct from "is this correct"
+-   Why `CandidateAssessment` composes `RankedCandidate` + `GeneratedFeedback` instead of either type growing a new field, and what concretely would have broken in `/download`'s CSV export if `RankedCandidate` had gained one
+-   Why `"".split("\n")` was checked directly before writing `Feedback`'s first read path, and what real, already-persisted row it would have silently mishandled
+-   Why `_candidate_assessments_for_job()`'s query wasn't unified with `_ranked_candidates_for_job()`'s despite the overlap, and what condition would actually trigger unifying them
+-   Why an inner join, not an outer join, was used for `Feedback` in the new `/results` query, and what "the read path shouldn't quietly paper over broken data" means in practice
+-   Why `RankResponse`/`ResultsResponse`'s shape was changed directly rather than gated behind an opt-in `?include_feedback=true` parameter
+-   Why `CandidateAssessment` lives in `app/backend/api/schemas.py` rather than `src/ranking.py` or `src/feedback/generator.py`, and what coupling that avoids between two currently-independent modules
 
 ------------------------------------------------------------------------
 
@@ -2292,3 +3007,65 @@ Completed (Session 16)
 - Added 20 new tests (129 total: 123 fast, 7 slow), including a regression test for the real bug found.
 - Manually verified end-to-end against a live server: `skill_score: 0.0` for the real resume against the electronics JD, correctly and honestly reflecting the exact-matching limitation (Verilog≠VHDL) even as `semantic_score` correctly captured the real domain relevance.
 - PROJECT_BIBLE synced with repository (version, domain models, design decisions, module responsibilities, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — also corrected a Git Note error caught before it was written (mistakenly assumed a PR had been merged without checking `git log` first).
+
+Completed (Session 18)
+
+- Hand-traced `ResumeEntry.dates` against the real sample resume before designing, per Session 17's own instruction; found EXPERIENCE has zero standalone date lines at all, which reshaped the plan away from one uniform duration/recency heuristic.
+- Designed and implemented `compute_experience_score()` (duration-based, JD-side "N years" regex sidestep) and `compute_education_score()` (degree-level-keyword-based, same JD-side sidestep) — `src/scorer/experience_matcher.py`, `src/scorer/education_matcher.py`.
+- Reasoned through and avoided a real false-positive risk before shipping: bare two-letter degree abbreviations ("BE", "ME") would collide with the common English words "be"/"me" even under `\b` anchoring; excluded them, required literal dots for "B.E."/"M.E." instead, added a regression test.
+- Added `build_resume_education()`/`build_resume_experience()` to `src/pipeline.py`, mirroring `build_resume_skills()`'s shape; wired both new scores into `RankedCandidate`/`/rank` as independent fields.
+- Added 24 new tests (153 total: 145 fast, 8 slow).
+- Manually verified end-to-end against a live server with real data: the real sample resume scored `education_score: 1.0` and `experience_score: 0.0` against a crafted JD — the latter honestly reflecting the real data gap found during hand-tracing, not a defect. Cleaned up live-server test artifacts afterward.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work left uncommitted pending user confirmation, per the recurring commit-discretion rule.
+
+Completed (Session 19)
+
+- Established a new standing workflow at the user's request: draft an implementation plan as a standalone markdown document, get it cross-reviewed (by ChatGPT, relayed via the user) before writing any code — this session is the first to follow it.
+- Drafted the plan for wiring `Scorer`'s weighted blend and persisting `Score` rows; ChatGPT's review agreed with most of it and changed two concrete decisions before implementation: added a DB-level `UniqueConstraint(job_id, resume_id)` on `Score` (correctly distinguished as a data-integrity invariant, not a business rule like the already-accepted `Candidate`-dedup non-decision) alongside the already-planned application-level upsert; reclassified the `semantic_score` `[-1,1]`-vs-others-`[0,1]` range mismatch from "accepted limitation" to explicitly tracked architectural debt.
+- Implemented `final_score` on `RankedCandidate` (`src/ranking.py`, computed via `compute_score(ScoreComponents(...))`), switched `/rank`'s sort key from `semantic_score` to `final_score`, and wired application-level `Score` upsert into the `/rank` route (`app/backend/api/routes.py`) — `ranking.py` stayed DB-session-free throughout, persistence lived entirely in the route.
+- Added 8 new tests (157 total: 148 fast, 9 slow), including a direct DB-level test proving the `UniqueConstraint` is real (bypassing the app-level upsert, expecting `IntegrityError`) and a test proving the sort key is genuinely `final_score`-driven via a fixture where it disagrees with `semantic_score`-only ordering.
+- Manually verified end-to-end against a live server with real data (fresh `data/app.db` recreated for the new schema): `final_score` matched hand-computed values exactly for the real sample resume and the synthetic chef resume; confirmed via a direct `sqlite3` query that calling `/rank` twice left exactly one `Score` row per resume, not two. Cleaned up live-server test artifacts afterward.
+- PROJECT_BIBLE synced with repository (version, database models, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Session 18's still-uncommitted work, both left uncommitted pending user confirmation, per the recurring commit-discretion rule.
+
+Completed (Session 20)
+
+- Drafted a second plan document under Session 19's workflow, covering `GET /results`: read-vs-recompute, the empty-list-vs-404 distinction, whether to reuse `RankedCandidate`, pagination, and where the query logic should live.
+- ChatGPT's review agreed with every recommendation as written — all four explicit questions answered "yes" — but still surfaced two things worth recording: independently named a gap the plan hadn't addressed (`/results` can't distinguish "never ranked" from "ranked, zero matches"), and connected this milestone's design to the still-unbuilt `/download` route (should likely consume the same persisted-read pattern rather than recomputing).
+- Implemented `ResultsResponse` (reusing `RankedCandidate`) and `GET /results` (`app/backend/api/routes.py`): 404 on nonexistent job, direct `Score`⋈`Resume`⋈`Candidate` query ordered by `final_score` descending for an existing one — no recomputation anywhere in the path.
+- Added 7 new tests (164 total: 153 fast, 11 slow), including a dedicated test proving a never-ranked resume is omitted rather than shown with a placeholder score, and a slow integration test proving `/results`' response is field-for-field identical to what a preceding real `/rank` call actually returned.
+- Manually verified end-to-end against a live server with real data: `/results` before `/rank` correctly returned `200`/`[]`; `/results` for a nonexistent job correctly returned `404`; `/results` after `/rank` was byte-for-byte identical to `/rank`'s own JSON response. Cleaned up live-server test artifacts afterward.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Sessions 18 and 19's still-uncommitted work, all left uncommitted pending user confirmation, per the recurring commit-discretion rule.
+
+Completed (Session 21)
+
+- Drafted a third plan document under Session 19's workflow, covering `GET /download`: read-vs-recompute, format scope, where the shared query and formatting logic should live, and response mechanics.
+- ChatGPT's review agreed with every core recommendation and made one adopted refinement: keep the new CSV exporter unaware of `job_id` specifically (`extra_columns` param instead), reasoning it should stay reusable if a future export (e.g. once Feedback exists) wants different context columns.
+- Recognized independently that `/results`' inline query now had a second caller and extracted `_ranked_candidates_for_job()` as a shared route-level helper — direct application of the "extract once a second consumer exists" precedent from Session 16.
+- Created `src/export/csv_exporter.py` — this project's first `Export` module implementation, closing the one stage in the Section 4 architecture diagram that had existed only as a label since scaffold. Used stdlib `csv`, not the long-unused `pandas` already sitting in `requirements.txt`.
+- Implemented `GET /download`: `Literal["csv"]` for automatic `422` on invalid formats, `404` on missing job, header-only CSV for a never-ranked job, real `Content-Disposition` attachment response.
+- Added 12 new tests (176 total: 163 fast, 13 slow), including exporter unit tests and a slow integration test proving the downloaded CSV matches `/rank`'s own JSON output field-for-field.
+- Manually verified end-to-end against a live server with real data: header-only CSV before any `/rank` call; `422` for an invalid `fmt`; downloaded CSV matched `/rank`'s response exactly after ranking, including the injected `job_id` column. Cleaned up live-server test artifacts afterward.
+- All 5 routes named in the Section 4 architecture diagram are now live — no stub routes remain in the project for the first time.
+- PROJECT_BIBLE synced with repository (version, folder structure, module responsibilities, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Sessions 18–20's still-uncommitted work, all left uncommitted pending user confirmation, per the recurring commit-discretion rule.
+
+Completed (Session 22)
+
+- Drafted a fourth plan document under Session 19's workflow, covering Feedback generation — the first genuinely new-domain-concept milestone, not routes-and-persistence plumbing. Hand-traced the scaffold's unvalidated recommendation thresholds against real data before designing: both real `final_score` values this project has ever produced would be labeled "Weak match," including the actually-relevant candidate.
+- ChatGPT's review was substantially more critical than Sessions 20/21 (8.8–9.0, not 9.7+) with five real architectural concerns, not refinements: agreed on extending the scorer modules to expose "why" detail; disagreed on `missing_skills = []` (should be `None`); found a concrete flaw in rank-position `recommendation` (discards score magnitude); objected to bolting `feedback` onto `RankedCandidate`; argued API-contract changes and generation+persistence are different review categories; rejected import-aliasing for the two-classes-named-`Feedback` collision in favor of a rename.
+- Took the review's closing observation seriously — "optimizing for completing the architecture diagram rather than the smallest coherent feature" — and scoped the milestone down accordingly: cut API exposure entirely, dropped `RankedCandidate` from the plan, simplified `generate_feedback()` to a pairwise pure function once rank-based `recommendation` was replaced with a fact-composed sentence.
+- Extended `skill_matcher.py`/`education_matcher.py`/`experience_matcher.py` with `matched_skills()`/`describe_education_match()`/`describe_experience_match()`, refactored `compute_*_score()` to use them — verified as a pure refactor (31 pre-existing tests unchanged). Caught and fixed a real subtlety in `any_parseable_dates`: a naive `duration > 0` check would misclassify a genuinely-parsed zero-length range as unparseable.
+- Rewrote `src/feedback/generator.py` as `GeneratedFeedback`/`generate_feedback()` — pairwise, pure, hand-traced against the real sample resume + electronics JD to produce honest text distinguishing data gaps from real deficiencies.
+- Wired `Feedback` persistence into `/rank`'s existing `Score` upsert loop; `Feedback.score_id` gained `unique=True`, `missing_skills` gained `nullable=True`. Verified live that `/rank`'s response shape is genuinely unchanged.
+- Added 26 new tests (202 total: 187 fast, 15 slow).
+- Manually verified end-to-end against a live server with real data: honest feedback text for both real and synthetic resumes, `missing_skills` correctly `NULL` in the real DB row, upsert confirmed, response shape confirmed unchanged. Cleaned up live-server test artifacts afterward.
+- PROJECT_BIBLE synced with repository (version, domain models, database models, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Sessions 18–21's still-uncommitted work, all left uncommitted pending user confirmation, per the recurring commit-discretion rule.
+
+Completed (Session 23)
+
+- Drafted a fifth plan document, scoped narrowly to exactly what Session 22 deferred (the response-shape decision), treating Session 22's own "keep the milestone to that decision, not more" note as binding.
+- While surveying what already existed, found two real, load-bearing things before proposing any design: `_ranked_candidates_for_job()` is shared by `/results` *and* `/download`, so a `feedback` field added directly to `RankedCandidate` would have broken or corrupted `/download`'s CSV — a concrete instance of Session 22's abstract objection; and `"".split("\n")` returns `['']`, not `[]` — verified directly, and found this wasn't hypothetical, since Session 22's own live verification had already produced exactly this row in real, persisted data (the chef resume's empty `strengths` column).
+- ChatGPT's review (9.4–9.6, up from 8.8–9.0) agreed with every core decision — `CandidateAssessment` composed at the API layer, `/download` left untouched, no new query needed for `/rank`, inner join with no defensive handling, direct response-shape change over an opt-in flag — and raised one non-blocking, forward-looking concern: the new `_candidate_assessments_for_job()` query duplicates `_ranked_candidates_for_job()`'s join. Logged as a watch item (introduce a shared read model if a *third* similar query appears), not fixed speculatively.
+- Implemented `CandidateAssessment` (`ranking` + `feedback`) in `app/backend/api/schemas.py`; wired `/rank` to build it from data already in its existing loop; added `_candidate_assessments_for_job()` for `/results`; left `/download` untouched.
+- Updated 6 existing test files for the new nested response shape (including fixing pre-existing `/results` fixtures that had never created matching `Feedback` rows, now required by the inner join) and added 2 new tests — 204 total: 189 fast, 15 slow.
+- Manually verified end-to-end against a live server with real data: nested `ranking`/`feedback` in `/rank`'s response, the chef resume's `strengths` correctly `[]` not `[""]` (the caught bug, confirmed fixed against real data), `/rank` and `/results`' full responses programmatically compared and found identical, `/download`'s CSV confirmed byte-for-byte unchanged. Cleaned up live-server test artifacts afterward.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Sessions 18–22's still-uncommitted work, all left uncommitted pending user confirmation, per the recurring commit-discretion rule.

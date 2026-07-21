@@ -179,3 +179,37 @@ def build_resume_skills(raw_text: str, filename: str = "") -> ResumeSkills:
         (s for s in sectioned.sections if s.section_type == SectionType.SKILLS), None
     )
     return extract_skills(skills_section) if skills_section else ResumeSkills(skills=())
+
+
+def build_resume_education(raw_text: str, filename: str = "") -> tuple[ResumeEntry, ...]:
+    """
+    The single, shared path from a resume's raw text to its extracted
+    EDUCATION entries: _reconstruct_sections -> find EDUCATION section
+    -> extract_entries.
+
+    Mirrors build_resume_skills()'s shape. Returns () if the resume
+    has no EDUCATION section at all — never raises.
+    """
+
+    sectioned = _reconstruct_sections(raw_text, filename)
+    education_section = next(
+        (s for s in sectioned.sections if s.section_type == SectionType.EDUCATION), None
+    )
+    return extract_entries(education_section) if education_section else ()
+
+
+def build_resume_experience(raw_text: str, filename: str = "") -> tuple[ResumeEntry, ...]:
+    """
+    The single, shared path from a resume's raw text to its extracted
+    EXPERIENCE entries: _reconstruct_sections -> find EXPERIENCE
+    section -> extract_entries.
+
+    Mirrors build_resume_skills()'s shape. Returns () if the resume
+    has no EXPERIENCE section at all — never raises.
+    """
+
+    sectioned = _reconstruct_sections(raw_text, filename)
+    experience_section = next(
+        (s for s in sectioned.sections if s.section_type == SectionType.EXPERIENCE), None
+    )
+    return extract_entries(experience_section) if experience_section else ()

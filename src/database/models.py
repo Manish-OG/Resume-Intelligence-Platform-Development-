@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -37,6 +37,7 @@ class Candidate(Base):
 
 class Score(Base):
     __tablename__ = "scores"
+    __table_args__ = (UniqueConstraint("job_id", "resume_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
@@ -52,10 +53,10 @@ class Feedback(Base):
     __tablename__ = "feedback"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    score_id: Mapped[int] = mapped_column(ForeignKey("scores.id"))
+    score_id: Mapped[int] = mapped_column(ForeignKey("scores.id"), unique=True)
     strengths: Mapped[str] = mapped_column(String)
     weaknesses: Mapped[str] = mapped_column(String)
-    missing_skills: Mapped[str] = mapped_column(String)
+    missing_skills: Mapped[str | None] = mapped_column(String, nullable=True)
     recommendation: Mapped[str] = mapped_column(String)
 
 
