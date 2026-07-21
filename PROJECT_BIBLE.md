@@ -53,13 +53,25 @@ and Section 18 (Known Technical Debt) for the honest breakdown.
 Git Note (updated Session 23, first written Session 8): Sessions 18
 through 23's work (experience/education scoring; `Scorer` blend +
 `Score` persistence; `GET /results`; `GET /download` + `Export`
-module; Feedback generation; Feedback API exposure) are all **not yet
-committed** as of this note, per the user's explicit choice at the end
-of Session 18 to leave work uncommitted across sessions — ask the user
-before committing, per the recurring rule that commits happen at the
-user's discretion, not automatically. The last real commit on `main`
-remains `dc02722` (PR #5, confirmed via `git log` at the start of
-Session 18).
+module; Feedback generation; Feedback API exposure) has been
+**committed and merged to `main`.** The user committed it as a single
+commit (not split per session — a more granular split was discussed
+but abandoned as impractical given how much several files, e.g.
+`app/backend/api/routes.py`, were re-touched across sessions) on a
+new branch, `feature/scoring-persistence-and-feedback`, opened as PR
+#6, and merged into `main` as `4d2d068`. The remote feature branch was
+deleted after merge (along with the repo's other, older feature
+branches — apparent repo housekeeping, not something done this
+session). Verified directly, not assumed: `git fetch` + `git status`
+confirmed local `main` matches `origin/main` exactly, working tree
+clean, and the full fast test suite (189 tests) re-run and passing
+directly on `main` post-merge — the actual merged content was checked,
+not just the merge event.
+
+**No uncommitted work remains as of the end of Session 23.** A new
+session starting from here should treat `main` as the current, fully
+up-to-date source of truth and begin fresh work (see Section 17) —
+there is nothing pending to ask the user about committing.
 
 (The previously-noted stray `extract` file was resolved and deleted
 with the user's explicit permission in an earlier session; no longer
@@ -3068,4 +3080,6 @@ Completed (Session 23)
 - Implemented `CandidateAssessment` (`ranking` + `feedback`) in `app/backend/api/schemas.py`; wired `/rank` to build it from data already in its existing loop; added `_candidate_assessments_for_job()` for `/results`; left `/download` untouched.
 - Updated 6 existing test files for the new nested response shape (including fixing pre-existing `/results` fixtures that had never created matching `Feedback` rows, now required by the inner join) and added 2 new tests — 204 total: 189 fast, 15 slow.
 - Manually verified end-to-end against a live server with real data: nested `ranking`/`feedback` in `/rank`'s response, the chef resume's `strengths` correctly `[]` not `[""]` (the caught bug, confirmed fixed against real data), `/rank` and `/results`' full responses programmatically compared and found identical, `/download`'s CSV confirmed byte-for-byte unchanged. Cleaned up live-server test artifacts afterward.
-- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Sessions 18–22's still-uncommitted work, all left uncommitted pending user confirmation, per the recurring commit-discretion rule.
+- PROJECT_BIBLE synced with repository (version, design decisions, module status, testing status, verification checklist, session log, TODO/next session, tech debt, interview talking points) — session's work, plus Sessions 18–22's still-uncommitted work, initially left uncommitted pending user confirmation, per the recurring commit-discretion rule.
+
+**Post-session update:** the user subsequently committed Sessions 18–23's combined work as a single commit on `feature/scoring-persistence-and-feedback`, opened PR #6, and merged it to `main` (`4d2d068`). Verified directly: `main` matches `origin/main`, working tree clean, full fast test suite (189 tests) re-run and passing on the merged `main`. No uncommitted work remains — see the Git Note in Section 1 for the full account. This closes out Session 23 cleanly for a fresh session to continue from (Section 17).
