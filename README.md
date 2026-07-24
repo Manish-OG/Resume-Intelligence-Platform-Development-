@@ -91,11 +91,13 @@ Final score is a configurable weighted blend:
 - [x] SQLite persistence
 - [x] Feedback generation
 - [x] Dockerization (verified: `docker-compose up --build` runs both containers end-to-end)
-- [x] Tests + docs (210 automated tests; full design history in `PROJECT_BIBLE.md`)
+- [x] Tests + docs (210 automated tests)
 - [ ] Batch/queued processing beyond per-request handling (per-file upload failures are already handled gracefully; no async job queue yet)
 - [ ] Cloud deployment (currently local/Docker only)
 
-See `PROJECT_BIBLE.md` for the full, honest breakdown of what's deliberately deferred and why.
+A detailed engineering log — every design decision, every session's work,
+and known limitations with the reasoning behind them — exists as a private
+document. Happy to walk through it on request.
 
 ## License
 

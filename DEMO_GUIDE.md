@@ -67,8 +67,7 @@ python -m streamlit run app/frontend/streamlit_app.py
 `streamlit run`. The bare form doesn't add the project root to
 `sys.path`, and the frontend imports from the top-level `app` package —
 you'll get `ModuleNotFoundError: No module named 'app'` otherwise. (This
-bit both the Docker image and a live local run before it was fixed —
-see `PROJECT_BIBLE.md`, Session 25, if you want the full story.)
+bit both the Docker image and a live local run before it was fixed.)
 
 Frontend: `http://localhost:8501`
 Backend Swagger docs: `http://localhost:8000/docs`
@@ -168,8 +167,9 @@ self-awareness.
 **"Is this AI-generated?"**
 > Built with Claude Code as an AI pair-programmer, with every
 > architectural decision — and the plan-then-cross-review workflow used
-> throughout — driven by you. Full design history is in
-> `PROJECT_BIBLE.md` if anyone wants to check.
+> throughout — driven by you. You keep a detailed private engineering
+> log of every session's decisions and reasoning — offer to walk through
+> it live if they want to go deeper, rather than handing over a link.
 
 ------------------------------------------------------------------------
 
@@ -194,7 +194,9 @@ self-awareness.
 ## 6. Where to point people for more depth
 
 - `README.md` — quick overview, stack, getting started.
-- `PROJECT_BIBLE.md` — the full story: every design decision, every
-  session's work, every known limitation and why it's there, ~90
-  interview talking points tied to real code. This is the single source
-  of truth if anyone wants to go deep.
+- Your private engineering log (kept outside the public repo, not
+  `README.md`/`DEMO_GUIDE.md`) — every design decision, every session's
+  work, every known limitation and why it's there, ~90 interview talking
+  points tied to real code. Offer to walk someone through it directly
+  rather than linking it — see the "Is this AI-generated?" answer above
+  for why.

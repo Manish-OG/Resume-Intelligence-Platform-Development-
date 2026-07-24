@@ -228,3 +228,6 @@ samples/
 # Claude Code session files
 .claude/
 SESSION_PROMPT.md
+
+# Private engineering log -- kept locally only, not published
+PROJECT_BIBLE.md
