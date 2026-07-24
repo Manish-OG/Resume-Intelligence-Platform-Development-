@@ -4,7 +4,7 @@ An AI application that ranks resumes against a job description using semantic
 similarity and skill matching, explains each score, flags missing skills, and
 exports the results.
 
-> Work in progress — see [Roadmap](#roadmap) for build status.
+> Core pipeline complete and verified end-to-end (local + Docker) — see [Roadmap](#roadmap) for what's left.
 
 ## Architecture
 
@@ -50,7 +50,10 @@ pip install -r requirements.txt
 uvicorn app.backend.main:app --reload
 
 # Run the frontend (separate terminal)
-streamlit run app/frontend/streamlit_app.py
+# Use `python -m streamlit run`, not bare `streamlit run` -- the bare
+# form doesn't add the project root to sys.path, and app/frontend/streamlit_app.py
+# imports from the top-level `app` package.
+python -m streamlit run app/frontend/streamlit_app.py
 
 # Run tests
 pytest
@@ -78,19 +81,21 @@ Final score is a configurable weighted blend:
 ## Roadmap
 
 - [x] Project scaffold
-- [ ] PDF parsing
-- [ ] Text preprocessing
-- [ ] Embeddings + semantic similarity
-- [ ] Skill extraction + matching
-- [ ] Weighted scoring engine
-- [ ] FastAPI backend
-- [ ] Streamlit frontend
-- [ ] SQLite persistence
-- [ ] Feedback generation
-- [ ] Batch processing + error handling
-- [ ] Dockerization
-- [ ] Tests + docs
-- [ ] Deployment
+- [x] PDF parsing
+- [x] Text preprocessing
+- [x] Embeddings + semantic similarity
+- [x] Skill extraction + matching
+- [x] Weighted scoring engine
+- [x] FastAPI backend
+- [x] Streamlit frontend
+- [x] SQLite persistence
+- [x] Feedback generation
+- [x] Dockerization (verified: `docker-compose up --build` runs both containers end-to-end)
+- [x] Tests + docs (210 automated tests; full design history in `PROJECT_BIBLE.md`)
+- [ ] Batch/queued processing beyond per-request handling (per-file upload failures are already handled gracefully; no async job queue yet)
+- [ ] Cloud deployment (currently local/Docker only)
+
+See `PROJECT_BIBLE.md` for the full, honest breakdown of what's deliberately deferred and why.
 
 ## License
 
